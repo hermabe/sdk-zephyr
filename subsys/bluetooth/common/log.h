@@ -81,6 +81,9 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME, LOG_LEVEL);
 #define BT_HEXDUMP_DBG(_data, _length, _str) \
 		LOG_HEXDUMP_DBG((const uint8_t *)_data, _length, _str)
 
+#define BT_HEXDUMP_WRN(_data, _length, _str) \
+		LOG_HEXDUMP_WRN((const uint8_t *)_data, _length, _str)
+
 /* NOTE: These helper functions always encodes into the same buffer storage.
  * It is the responsibility of the user of this function to copy the information
  * in this string if needed.

@@ -13,6 +13,7 @@
 #include <bluetooth/iso.h>
 #include <bluetooth/buf.h>
 #include <bluetooth/direction.h>
+#include <bluetooth/addr.h>
 
 #include "hci_core.h"
 #include "conn_internal.h"
@@ -27,6 +28,11 @@ static bt_le_scan_cb_t *scan_dev_found_cb;
 static sys_slist_t scan_cbs = SYS_SLIST_STATIC_INIT(&scan_cbs);
 
 #if defined(CONFIG_BT_EXT_ADV)
+/* A buffer pool used to reassemble advertisement data from the controller. */
+NET_BUF_POOL_FIXED_DEFINE(ext_scan_buf_pool, 1, CONFIG_BT_EXT_SCAN_BUF_SIZE, NULL);
+static struct net_buf *ext_scan_buf;
+static bt_addr_le_t current_fragmented_peer;
+
 #if defined(CONFIG_BT_PER_ADV_SYNC)
 static struct bt_le_per_adv_sync *get_pending_per_adv_sync(void);
 static struct bt_le_per_adv_sync per_adv_sync_pool[CONFIG_BT_PER_ADV_SYNC_MAX];
@@ -37,6 +43,15 @@ static sys_slist_t pa_sync_cbs = SYS_SLIST_STATIC_INIT(&pa_sync_cbs);
 void bt_scan_reset(void)
 {
 	scan_dev_found_cb = NULL;
+#if defined(CONFIG_BT_EXT_ADV)
+	bt_addr_le_copy(&current_fragmented_peer, BT_ADDR_LE_NONE);
+	if (ext_scan_buf) {
+		net_buf_reset(ext_scan_buf);
+	} else {
+		ext_scan_buf = net_buf_alloc(&ext_scan_buf_pool, K_NO_WAIT);
+		__ASSERT_NO_MSG(ext_scan_buf);
+	}
+#endif
 }
 
 static int set_le_ext_scan_enable(uint8_t enable, uint16_t duration)
@@ -391,8 +406,8 @@ static uint8_t get_adv_props(uint8_t evt_type)
 	}
 }
 
-static void le_adv_recv(bt_addr_le_t *addr, struct bt_le_scan_recv_info *info,
-			struct net_buf *buf, uint8_t len)
+static void le_adv_recv(bt_addr_le_t *addr, struct bt_le_scan_recv_info *info, struct net_buf *buf,
+			uint16_t len)
 {
 	struct bt_le_scan_cb *listener, *next;
 	struct net_buf_simple_state state;
@@ -507,15 +522,37 @@ static uint8_t get_adv_type(uint8_t evt_type)
 	}
 }
 
+static void create_adv_report(struct bt_hci_evt_le_ext_advertising_info const *const evt,
+			      struct bt_le_scan_recv_info *const adv_info)
+{
+	adv_info->primary_phy = bt_get_phy(evt->prim_phy);
+	adv_info->secondary_phy = bt_get_phy(evt->sec_phy);
+	adv_info->tx_power = evt->tx_power;
+	adv_info->rssi = evt->rssi;
+	adv_info->sid = evt->sid;
+	adv_info->interval = sys_le16_to_cpu(evt->interval);
+	adv_info->adv_type = get_adv_type(evt->evt_type);
+	/* Convert "Legacy" property to Extended property. */
+	adv_info->adv_props = evt->evt_type ^ BT_HCI_LE_ADV_PROP_LEGACY;
+}
+
+static bool is_addrs_equal(bt_addr_le_t const *const first, bt_addr_le_t const *const second)
+{
+	// FIXME: Should type also be equal?
+	return memcmp(first->a.val, second->a.val, sizeof(second->a.val)) == 0;
+}
+
 void bt_hci_le_adv_ext_report(struct net_buf *buf)
 {
 	uint8_t num_reports = net_buf_pull_u8(buf);
 
-	BT_DBG("Adv number of reports %u",  num_reports);
+	BT_DBG("Adv number of reports %u", num_reports);
 
 	while (num_reports--) {
 		struct bt_hci_evt_le_ext_advertising_info *evt;
 		struct bt_le_scan_recv_info adv_info;
+		uint8_t size_to_copy;
+		bool truncate;
 
 		if (buf->len < sizeof(*evt)) {
 			BT_ERR("Unexpected end of buffer");
@@ -523,19 +560,92 @@ void bt_hci_le_adv_ext_report(struct net_buf *buf)
 		}
 
 		evt = net_buf_pull_mem(buf, sizeof(*evt));
+		const bool is_current_fragmented_peer =
+			is_addrs_equal(&current_fragmented_peer, &evt->addr);
+		const bool has_fragmented_peer =
+			!is_addrs_equal(&current_fragmented_peer, BT_ADDR_LE_NONE);
 
-		adv_info.primary_phy = bt_get_phy(evt->prim_phy);
-		adv_info.secondary_phy = bt_get_phy(evt->sec_phy);
-		adv_info.tx_power = evt->tx_power;
-		adv_info.rssi = evt->rssi;
-		adv_info.sid = evt->sid;
-		adv_info.interval = sys_le16_to_cpu(evt->interval);
+		const uint16_t data_status = (evt->evt_type & (BIT(5) | BIT(6))) >> 5;
+		const bool is_complete = (data_status == 0);
+		const bool more_to_come = evt->evt_type & BIT(5);
+		const bool ctrl_truncated = evt->evt_type & BIT(6);
 
-		adv_info.adv_type = get_adv_type(evt->evt_type);
-		/* Convert "Legacy" property to Extended property. */
-		adv_info.adv_props = evt->evt_type ^ BT_HCI_LE_ADV_PROP_LEGACY;
+		BT_WARN("Evt: length: %d, type: %X", evt->length, evt->evt_type);
+		BT_WARN("is_current_fragmented_peer: %d", is_current_fragmented_peer);
+		BT_WARN("has_fragmented_peer: %d", has_fragmented_peer);
+		BT_WARN("data_status: %d", data_status);
+		BT_WARN("is_complete: %d", is_complete);
+		BT_WARN("more_to_come: %d", more_to_come);
+		BT_WARN("ctrl_truncated: %d", ctrl_truncated);
 
-		le_adv_recv(&evt->addr, &adv_info, buf, evt->length);
+		if (is_complete && !is_current_fragmented_peer) {
+			/* Complete advertising report.
+			 * Does not need reassembly, create event immediately
+			*/
+			create_adv_report(evt, &adv_info);
+			le_adv_recv(&evt->addr, &adv_info, buf, evt->length);
+			continue;
+		}
+
+		if (!ext_scan_buf) {
+			/* The previous report was truncated in the host.
+			 * Discard all remaining reports for that advertisement.
+			 */
+
+			if (!(more_to_come)) {
+				/* This event is the last event to be discarded.
+				 */
+				ext_scan_buf = net_buf_alloc(&ext_scan_buf_pool,
+							     K_NO_WAIT);
+				__ASSERT_NO_MSG(ext_scan_buf);
+				bt_addr_le_copy(&current_fragmented_peer, BT_ADDR_LE_NONE);
+			}
+
+			continue;
+		}
+
+		if (!has_fragmented_peer) {
+			bt_addr_le_copy(&current_fragmented_peer, &evt->addr);
+		}
+
+		if (evt->length + ext_scan_buf->len > net_buf_max_len(ext_scan_buf)) {
+			size_to_copy = net_buf_max_len(ext_scan_buf) - evt->length;
+			truncate = true;
+		} else {
+			size_to_copy = evt->length;
+			truncate = false;
+		}
+		BT_WARN("truncate: %d", truncate);
+
+		net_buf_add_mem(ext_scan_buf, buf->data, size_to_copy);
+		if (!truncate && more_to_come) {
+			/* More data to come. */
+			BT_WARN("Current len: %d. More data to come", ext_scan_buf->len);
+			continue;
+		}
+
+		create_adv_report(evt, &adv_info);
+		adv_info.adv_props &= BIT_MASK(5);
+
+		if (truncate || ctrl_truncated) {
+			adv_info.adv_props |= BT_GAP_ADV_PROP_REPORT_TRUNCATED;
+		}
+
+		BT_WARN("le_adv_recv len: %d", ext_scan_buf->len);
+		BT_HEXDUMP_DBG(ext_scan_buf->data, ext_scan_buf->len, "ext_scan_buf");
+		le_adv_recv(&evt->addr, &adv_info, ext_scan_buf, ext_scan_buf->len);
+		net_buf_reset(ext_scan_buf);
+		bt_addr_le_copy(&current_fragmented_peer, BT_ADDR_LE_NONE);
+
+		if (truncate && !more_to_come) { // FIXME: This does not match the comment
+			/* We have truncated the data and the controller
+			 * will provide more data.
+			 * Therefore we must discard the remaining part of the
+			 * advertisement.
+			 */
+			net_buf_unref(ext_scan_buf);
+			ext_scan_buf = NULL;
+		}
 
 		net_buf_pull(buf, evt->length);
 	}

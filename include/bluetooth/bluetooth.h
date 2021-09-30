@@ -292,7 +292,7 @@ int bt_id_delete(uint8_t id);
  */
 struct bt_data {
 	uint8_t type;
-	uint8_t data_len;
+	uint16_t data_len;
 	const uint8_t *data;
 };
 
