@@ -439,6 +439,15 @@ static void test_host_long_adv_recv(void)
 	send_adv_report(&report_a_2);
 	send_adv_report(&report_b_2);
 
+	// Check that advertiser is timed out and data is discarded
+	ztest_returns_value(get_expected_data, &report_b_combined.data[0]);
+	ztest_returns_value(get_expected_length, report_b_combined.length); // Expect only b
+	send_adv_report(&report_a_1);
+	zassert_equal(k_msleep(10000), 0, "Sleep failed");
+	send_adv_report(&report_a_2);
+	send_adv_report(&report_b_1);
+	send_adv_report(&report_b_2);
+
 	// Check that host truncates the data if the controller keeps sending incomplete
 	// packets
 	ztest_returns_value(get_expected_data, &report_a_1_repeated.data[0]);

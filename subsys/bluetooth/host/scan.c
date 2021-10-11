@@ -60,10 +60,10 @@ static bool frag_advertisers_equal(const struct fragmented_advertiser *a, const 
 	return a->sid == sid && bt_addr_le_cmp(&a->addr, addr) == 0;
 }
 
-// static bool frag_advertiser_timed_out(const struct fragmented_advertiser *frag_adv)
-// {
-// 	return (k_uptime_get() - frag_adv->time_added_ms) > FRAG_TIMEOUT_MS;
-// }
+static bool frag_advertiser_timed_out(const struct fragmented_advertiser *frag_adv)
+{
+	return (k_uptime_get() - frag_adv->time_added_ms) > FRAG_TIMEOUT_MS;
+}
 
 static sys_dnode_t *add_frag_advertiser(const bt_addr_le_t *addr, uint8_t sid)
 {
@@ -110,12 +110,6 @@ static void remove_frag_advertiser_node(sys_dnode_t *to_remove)
 		k_free(FRAG_ADVERTISER_FROM_DNODE(to_remove));
 	}
 }
-
-// static void remove_frag_advertiser(const bt_addr_le_t *addr, uint8_t sid)
-// {
-// 	sys_dnode_t *to_remove = find_frag_advertiser_node(addr, sid);
-// 	remove_frag_advertiser_node(to_remove);
-// }
 
 #if defined(CONFIG_BT_PER_ADV_SYNC)
 static struct bt_le_per_adv_sync *get_pending_per_adv_sync(void);
@@ -684,8 +678,23 @@ void bt_hci_le_adv_ext_report(struct net_buf *buf)
 		sys_dnode_t *active_advertiser = get_active_fragmented_advertiser();
 
 		if (active_advertiser) {
-			if (active_advertiser != current_advertiser) {
-				// Receiving adv report from a different advertiser. Discard the report.
+			if (frag_advertiser_timed_out(
+				    FRAG_ADVERTISER_FROM_DNODE(active_advertiser))) {
+				/* Do not keep reports from timed out advertiser */
+				FRAG_ADVERTISER_FROM_DNODE(active_advertiser)->should_keep_reports =
+					false;
+				net_buf_reset(ext_scan_buf);
+				if (new_advertiser) {
+					/* If this is the first report from this advertiser,
+					 * we can start combining the reports from it.
+					 */
+					FRAG_ADVERTISER_FROM_DNODE(current_advertiser)
+						->should_keep_reports = true;
+				}
+			}
+
+			else if (active_advertiser != current_advertiser) {
+				// Receiving adv report from a non-active advertiser. Discard the report.
 				net_buf_pull_mem(buf, evt->length);
 				continue;
 			}
@@ -699,24 +708,9 @@ void bt_hci_le_adv_ext_report(struct net_buf *buf)
 			/* Discard report
 			*/
 			net_buf_pull_mem(buf, evt->length);
-			continue;
-		}
-
-		// Can this be removed and replaced with the logic above?
-		if (!ext_scan_buf) {
-			/* The previous report was truncated in the host.
-			 * Discard all remaining reports for that advertisement.
-			 */
-
-			if (!(more_to_come)) {
-				/* This event is the last event to be discarded.
-				 */
-				ext_scan_buf = net_buf_alloc(&ext_scan_buf_pool,
-							     K_NO_WAIT);
-				__ASSERT_NO_MSG(ext_scan_buf);
+			if (!more_to_come) {
 				remove_frag_advertiser_node(current_advertiser);
 			}
-
 			continue;
 		}
 
@@ -738,6 +732,9 @@ void bt_hci_le_adv_ext_report(struct net_buf *buf)
 			continue;
 		}
 
+		/* Either we have truncated or there is no more data coming from the controller.
+		 * Create event.
+		 */
 		create_ext_adv_info(evt, &adv_info);
 		adv_info.adv_props &= BIT_MASK(5);
 
@@ -749,17 +746,17 @@ void bt_hci_le_adv_ext_report(struct net_buf *buf)
 		BT_HEXDUMP_WRN(ext_scan_buf->data, ext_scan_buf->len, "ext_scan_buf");
 		le_adv_recv(&evt->addr, &adv_info, ext_scan_buf, ext_scan_buf->len);
 		net_buf_reset(ext_scan_buf);
-		remove_frag_advertiser_node(current_advertiser);
 
-		// Same here, can this be removed and replaced with the logic above?
-		if (truncate && !more_to_come) { // FIXME: This does not match the comment
+		if (truncate && more_to_come) {
 			/* We have truncated the data and the controller
 			 * will provide more data.
 			 * Therefore we must discard the remaining part of the
 			 * advertisement.
 			 */
-			net_buf_unref(ext_scan_buf);
-			ext_scan_buf = NULL;
+			FRAG_ADVERTISER_FROM_DNODE(current_advertiser)->should_keep_reports = false;
+		} else {
+			/* No more data will come. */
+			remove_frag_advertiser_node(current_advertiser);
 		}
 
 		net_buf_pull(buf, evt->length);
