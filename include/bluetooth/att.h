@@ -56,6 +56,8 @@ extern "C" {
 int bt_eatt_disconnect_one(struct bt_conn *conn);
 #endif /* CONFIG_BT_TESTING */
 
+bool bt_att_is_change_aware(struct bt_conn *conn);
+
 #ifdef __cplusplus
 }
 #endif

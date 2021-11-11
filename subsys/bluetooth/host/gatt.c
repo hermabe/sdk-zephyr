@@ -2011,10 +2011,8 @@ static void gatt_indicate_rsp(struct bt_conn *conn, uint8_t err,
 	}
 }
 
-static struct bt_att_req *gatt_req_alloc(bt_att_func_t func, void *params,
-					 bt_att_encode_t encode,
-					 uint8_t op,
-					 size_t len)
+static struct bt_att_req *gatt_req_alloc(bt_att_func_t func, void *params, bt_att_encode_t encode,
+					 uint8_t op, size_t len, uint8_t channel_flags)
 {
 	struct bt_att_req *req;
 
@@ -2031,26 +2029,32 @@ static struct bt_att_req *gatt_req_alloc(bt_att_func_t func, void *params,
 #endif
 	req->func = func;
 	req->user_data = params;
+	req->channel_flags = channel_flags;
+	BT_DBG("Setting req->user_data: %p", req->user_data);
 
 	return req;
 }
 
 #ifdef CONFIG_BT_GATT_CLIENT
 static int gatt_req_send(struct bt_conn *conn, bt_att_func_t func, void *params,
-			 bt_att_encode_t encode, uint8_t op, size_t len)
+			 bt_att_encode_t encode, uint8_t op, size_t len, uint8_t channel_flags)
 
 {
 	struct bt_att_req *req;
 	struct net_buf *buf;
 	int err;
 
-	req = gatt_req_alloc(func, params, encode, op, len);
+	BT_DBG("");
+	req = gatt_req_alloc(func, params, encode, op, len, channel_flags);
+	BT_DBG("func: %p, params: %p, req: %p", (void *)func, params, req);
 	if (!req) {
+		BT_DBG("gatt_req_alloc() failed");
 		return -ENOMEM;
 	}
 
 	buf = bt_att_create_pdu(conn, op, len);
 	if (!buf) {
+		BT_DBG("bt_att_create_pdu() failed");
 		bt_att_req_free(req);
 		return -ENOMEM;
 	}
@@ -2059,12 +2063,14 @@ static int gatt_req_send(struct bt_conn *conn, bt_att_func_t func, void *params,
 
 	err = encode(buf, len, params);
 	if (err) {
+		BT_DBG("encode() failed with err: %d", err);
 		bt_att_req_free(req);
 		return err;
 	}
 
 	err = bt_att_req_send(conn, req);
 	if (err) {
+		BT_DBG("bt_att_req_send() failed with err: %d", err);
 		bt_att_req_free(req);
 	}
 
@@ -2103,8 +2109,9 @@ static int gatt_indicate(struct bt_conn *conn, uint16_t handle,
 
 	len = sizeof(*ind) + params->len;
 
-	req = gatt_req_alloc(gatt_indicate_rsp, params, NULL,
-			     BT_ATT_OP_INDICATE, len);
+	BT_DBG("gatt_indicate_rsp: %p, params: %p", (void *)gatt_indicate_rsp, params);
+	req = gatt_req_alloc(gatt_indicate_rsp, params, NULL, BT_ATT_OP_INDICATE, len,
+			     ATT_REQ_ATT | ATT_REQ_EATT);
 	if (!req) {
 		return -ENOMEM;
 	}
@@ -2936,15 +2943,16 @@ int bt_gatt_exchange_mtu(struct bt_conn *conn,
 			 struct bt_gatt_exchange_params *params)
 {
 	__ASSERT(conn, "invalid parameter\n");
+	BT_DBG("params->func: %p", (void *)params->func);
 	__ASSERT(params && params->func, "invalid parameters\n");
 
 	if (conn->state != BT_CONN_CONNECTED) {
 		return -ENOTCONN;
 	}
-
-	return gatt_req_send(conn, gatt_mtu_rsp, params,
-			     gatt_exchange_mtu_encode, BT_ATT_OP_MTU_REQ,
-			     sizeof(struct bt_att_exchange_mtu_req));
+	BT_DBG("gatt_mtu_rsp: %p", (void *)gatt_mtu_rsp);
+	return gatt_req_send(conn, gatt_mtu_rsp, params, gatt_exchange_mtu_encode,
+			     BT_ATT_OP_MTU_REQ, sizeof(struct bt_att_exchange_mtu_req),
+			     ATT_REQ_ATT | ATT_REQ_EATT);
 }
 
 static void gatt_discover_next(struct bt_conn *conn, uint16_t last_handle,
@@ -3071,6 +3079,9 @@ static int gatt_find_type_encode(struct net_buf *buf, size_t len,
 static int gatt_find_type(struct bt_conn *conn,
 			  struct bt_gatt_discover_params *params)
 {
+	__ASSERT(conn, "invalid parameter\n");
+	BT_DBG("params->func: %p", (void *)params->func);
+	__ASSERT(params && params->func, "invalid parameters\n");
 	size_t len;
 
 	len = sizeof(struct bt_att_find_type_req);
@@ -3086,10 +3097,9 @@ static int gatt_find_type(struct bt_conn *conn,
 		BT_ERR("Unknown UUID type %u", params->uuid->type);
 		return -EINVAL;
 	}
-
-	return gatt_req_send(conn, gatt_find_type_rsp, params,
-			     gatt_find_type_encode, BT_ATT_OP_FIND_TYPE_REQ,
-			     len);
+	BT_DBG("gatt_find_type_rsp: %p", (void *)gatt_find_type_rsp);
+	return gatt_req_send(conn, gatt_find_type_rsp, params, gatt_find_type_encode,
+			     BT_ATT_OP_FIND_TYPE_REQ, len, ATT_REQ_ATT | ATT_REQ_EATT);
 }
 
 static void read_included_uuid_cb(struct bt_conn *conn, uint8_t err,
@@ -3153,11 +3163,14 @@ static int read_included_uuid_encode(struct net_buf *buf, size_t len,
 static int read_included_uuid(struct bt_conn *conn,
 			      struct bt_gatt_discover_params *params)
 {
+	__ASSERT(conn, "invalid parameter\n");
+	BT_DBG("params->func: %p", (void *)params->func);
+	__ASSERT(params && params->func, "invalid parameters\n");
 	BT_DBG("handle 0x%04x", params->_included.start_handle);
-
-	return gatt_req_send(conn, read_included_uuid_cb, params,
-			     read_included_uuid_encode, BT_ATT_OP_READ_REQ,
-			     sizeof(struct bt_att_read_req));
+	BT_DBG("read_included_uuid_cb: %p", (void *)read_included_uuid_cb);
+	return gatt_req_send(conn, read_included_uuid_cb, params, read_included_uuid_encode,
+			     BT_ATT_OP_READ_REQ, sizeof(struct bt_att_read_req),
+			     ATT_REQ_ATT | ATT_REQ_EATT);
 }
 
 static uint16_t parse_include(struct bt_conn *conn, const void *pdu,
@@ -3462,12 +3475,15 @@ static int gatt_read_type_encode(struct net_buf *buf, size_t len,
 static int gatt_read_type(struct bt_conn *conn,
 			  struct bt_gatt_discover_params *params)
 {
+	__ASSERT(conn, "invalid parameter\n");
+	BT_DBG("params->func: %p", (void *)params->func);
+	__ASSERT(params && params->func, "invalid parameters\n");
 	BT_DBG("start_handle 0x%04x end_handle 0x%04x", params->start_handle,
 	       params->end_handle);
-
-	return gatt_req_send(conn, gatt_read_type_rsp, params,
-			     gatt_read_type_encode, BT_ATT_OP_READ_TYPE_REQ,
-			     sizeof(struct bt_att_read_type_req));
+	BT_DBG("gatt_read_type_rsp: %p", (void *)gatt_read_type_rsp);
+	return gatt_req_send(conn, gatt_read_type_rsp, params, gatt_read_type_encode,
+			     BT_ATT_OP_READ_TYPE_REQ, sizeof(struct bt_att_read_type_req),
+			     ATT_REQ_ATT | ATT_REQ_EATT);
 }
 
 static uint16_t parse_service(struct bt_conn *conn, const void *pdu,
@@ -3599,13 +3615,15 @@ static int gatt_read_group_encode(struct net_buf *buf, size_t len,
 static int gatt_read_group(struct bt_conn *conn,
 			   struct bt_gatt_discover_params *params)
 {
+	__ASSERT(conn, "invalid parameter\n");
+	BT_DBG("params->func: %p", (void *)params->func);
+	__ASSERT(params && params->func, "invalid parameters\n");
 	BT_DBG("start_handle 0x%04x end_handle 0x%04x", params->start_handle,
 	       params->end_handle);
-
-	return gatt_req_send(conn, gatt_read_group_rsp, params,
-			     gatt_read_group_encode,
-			     BT_ATT_OP_READ_GROUP_REQ,
-			     sizeof(struct bt_att_read_group_req));
+	BT_DBG("gatt_read_group_rsp: %p", (void *)gatt_read_group_rsp);
+	return gatt_req_send(conn, gatt_read_group_rsp, params, gatt_read_group_encode,
+			     BT_ATT_OP_READ_GROUP_REQ, sizeof(struct bt_att_read_group_req),
+			     ATT_REQ_ATT | ATT_REQ_EATT);
 }
 
 static void gatt_find_info_rsp(struct bt_conn *conn, uint8_t err,
@@ -3737,18 +3755,22 @@ static int gatt_find_info_encode(struct net_buf *buf, size_t len,
 static int gatt_find_info(struct bt_conn *conn,
 			  struct bt_gatt_discover_params *params)
 {
+	__ASSERT(conn, "invalid parameter\n");
+	BT_DBG("params->func: %p", (void *)params->func);
+	__ASSERT(params && params->func, "invalid parameters\n");
 	BT_DBG("start_handle 0x%04x end_handle 0x%04x", params->start_handle,
 	       params->end_handle);
-
-	return gatt_req_send(conn, gatt_find_info_rsp, params,
-			     gatt_find_info_encode, BT_ATT_OP_FIND_INFO_REQ,
-			     sizeof(struct bt_att_find_info_req));
+	BT_DBG("gatt_find_info_rsp: %p", (void *)gatt_find_info_rsp);
+	return gatt_req_send(conn, gatt_find_info_rsp, params, gatt_find_info_encode,
+			     BT_ATT_OP_FIND_INFO_REQ, sizeof(struct bt_att_find_info_req),
+			     ATT_REQ_ATT | ATT_REQ_EATT);
 }
 
 int bt_gatt_discover(struct bt_conn *conn,
 		     struct bt_gatt_discover_params *params)
 {
 	__ASSERT(conn, "invalid parameters\n");
+	BT_DBG("params->func: %p", (void *)params->func);
 	__ASSERT(params && params->func, "invalid parameters\n");
 	__ASSERT((params->start_handle && params->end_handle),
 		 "invalid parameters\n");
@@ -3804,6 +3826,8 @@ static void parse_read_by_uuid(struct bt_conn *conn,
 {
 	const struct bt_att_read_type_rsp *rsp = pdu;
 
+	BT_DBG("params: %p", params);
+
 	/* Parse values found */
 	for (length--, pdu = rsp->data; length;
 	     length -= rsp->len, pdu = (const uint8_t *)pdu + rsp->len) {
@@ -3826,29 +3850,39 @@ static void parse_read_by_uuid(struct bt_conn *conn,
 		/* Update start_handle */
 		params->by_uuid.start_handle = handle;
 
+		BT_DBG("params->func: %p", (void *)params->func);
+		__ASSERT_NO_MSG(params->func);
 		if (params->func(conn, 0, params, data->value, len) ==
 		    BT_GATT_ITER_STOP) {
+			BT_DBG("BT_GATT_ITER_STOP");
 			return;
 		}
+		BT_DBG("params->func ran");
 
 		/* Check if long attribute */
 		if (rsp->len > length) {
+			BT_DBG("Long attribute");
 			break;
 		}
+		BT_DBG("Attribute length OK");
 
 		/* Stop if it's the last handle to be read */
 		if (params->by_uuid.start_handle == params->by_uuid.end_handle) {
 			params->func(conn, 0, params, NULL, 0);
+			BT_DBG("Last handle");
 			return;
 		}
 
 		params->by_uuid.start_handle++;
+		BT_DBG("Continuing");
 	}
 
 	/* Continue reading the attributes */
+	BT_DBG("Continue reading");
 	if (bt_gatt_read(conn, params) < 0) {
 		params->func(conn, BT_ATT_ERR_UNLIKELY, params, NULL, 0);
 	}
+	BT_DBG("parse_read_by_uuid() end");
 }
 
 static void gatt_read_rsp(struct bt_conn *conn, uint8_t err, const void *pdu,
@@ -3857,8 +3891,10 @@ static void gatt_read_rsp(struct bt_conn *conn, uint8_t err, const void *pdu,
 	struct bt_gatt_read_params *params = user_data;
 
 	BT_DBG("err 0x%02x", err);
+	BT_DBG("params: %p, params->func: %p", params, (void *)params->func);
 
 	if (err || !length) {
+		__ASSERT_NO_MSG(params->func);
 		params->func(conn, err, params, NULL, 0);
 		return;
 	}
@@ -3868,6 +3904,7 @@ static void gatt_read_rsp(struct bt_conn *conn, uint8_t err, const void *pdu,
 		return;
 	}
 
+	__ASSERT_NO_MSG(params->func);
 	if (params->func(conn, 0, params, pdu, length) == BT_GATT_ITER_STOP) {
 		return;
 	}
@@ -3886,6 +3923,7 @@ static void gatt_read_rsp(struct bt_conn *conn, uint8_t err, const void *pdu,
 	params->single.offset += length;
 
 	/* Continue reading the attribute */
+	BT_DBG("Continue reading");
 	if (bt_gatt_read(conn, params) < 0) {
 		params->func(conn, BT_ATT_ERR_UNLIKELY, params, NULL, 0);
 	}
@@ -3907,12 +3945,15 @@ static int gatt_read_blob_encode(struct net_buf *buf, size_t len,
 static int gatt_read_blob(struct bt_conn *conn,
 			  struct bt_gatt_read_params *params)
 {
+	__ASSERT(conn, "invalid parameter\n");
+	BT_DBG("params->func: %p", (void *)params->func);
+	__ASSERT(params && params->func, "invalid parameters\n");
 	BT_DBG("handle 0x%04x offset 0x%04x", params->single.handle,
 	       params->single.offset);
-
-	return gatt_req_send(conn, gatt_read_rsp, params,
-			     gatt_read_blob_encode, BT_ATT_OP_READ_BLOB_REQ,
-			     sizeof(struct bt_att_read_blob_req));
+	BT_DBG("gatt_read_rsp: %p", (void *)gatt_read_rsp);
+	return gatt_req_send(conn, gatt_read_rsp, params, gatt_read_blob_encode,
+			     BT_ATT_OP_READ_BLOB_REQ, sizeof(struct bt_att_read_blob_req),
+			     params->channel_flags);
 }
 
 static int gatt_read_uuid_encode(struct net_buf *buf, size_t len,
@@ -3937,13 +3978,30 @@ static int gatt_read_uuid_encode(struct net_buf *buf, size_t len,
 static int gatt_read_uuid(struct bt_conn *conn,
 			  struct bt_gatt_read_params *params)
 {
+	__ASSERT(conn, "invalid parameter\n");
+	BT_DBG("params->func: %p", (void *)params->func);
+	__ASSERT(params && params->func, "invalid parameters\n");
 	BT_DBG("start_handle 0x%04x end_handle 0x%04x uuid %s",
 		params->by_uuid.start_handle, params->by_uuid.end_handle,
 		bt_uuid_str(params->by_uuid.uuid));
+	BT_DBG("gatt_read_rsp: %p, params: %p", (void *)gatt_read_rsp, params);
 
-	return gatt_req_send(conn, gatt_read_rsp, params,
-			     gatt_read_uuid_encode, BT_ATT_OP_READ_TYPE_REQ,
-			     sizeof(struct bt_att_read_type_req));
+	/* Core spec v5.3, Vol. 3, Part G, 2.5.2.1:
+	 * A change-unaware client using multiple ATT bearers shall wait until the server
+	 * has responded to all pending requests before reading the Database Hash characteristic.
+	 */
+	bool is_db_hash = bt_uuid_cmp(params->by_uuid.uuid, BT_UUID_GATT_DB_HASH) == 0;
+	bool is_change_aware = bt_att_is_change_aware(conn);
+
+	BT_DBG("is_db_hash: %d, is_change_aware: %d", is_db_hash, is_change_aware);
+
+	if (is_db_hash && !is_change_aware) {
+		BT_DBG("Should wait");
+	}
+
+	return gatt_req_send(conn, gatt_read_rsp, params, gatt_read_uuid_encode,
+			     BT_ATT_OP_READ_TYPE_REQ, sizeof(struct bt_att_read_type_req),
+			     params->channel_flags);
 }
 
 #if defined(CONFIG_BT_GATT_READ_MULTIPLE)
@@ -3981,11 +4039,14 @@ static int gatt_read_mult_encode(struct net_buf *buf, size_t len,
 static int gatt_read_mult(struct bt_conn *conn,
 			  struct bt_gatt_read_params *params)
 {
+	__ASSERT(conn, "invalid parameter\n");
+	BT_DBG("params->func: %p", (void *)params->func);
+	__ASSERT(params && params->func, "invalid parameters\n");
 	BT_DBG("handle_count %zu", params->handle_count);
-
-	return gatt_req_send(conn, gatt_read_mult_rsp, params,
-			     gatt_read_mult_encode, BT_ATT_OP_READ_MULT_REQ,
-			     params->handle_count * sizeof(uint16_t));
+	BT_DBG("gatt_read_mult_rsp: %p", (void *)gatt_read_mult_rsp);
+	return gatt_req_send(conn, gatt_read_mult_rsp, params, gatt_read_mult_encode,
+			     BT_ATT_OP_READ_MULT_REQ, params->handle_count * sizeof(uint16_t),
+			     params->channel_flags);
 }
 
 #if defined(CONFIG_BT_EATT)
@@ -4045,12 +4106,14 @@ static int gatt_read_mult_vl_encode(struct net_buf *buf, size_t len,
 static int gatt_read_mult_vl(struct bt_conn *conn,
 			     struct bt_gatt_read_params *params)
 {
+	__ASSERT(conn, "invalid parameter\n");
+	BT_DBG("params->func: %p", (void *)params->func);
+	__ASSERT(params && params->func, "invalid parameters\n");
 	BT_DBG("handle_count %zu", params->handle_count);
-
-	return gatt_req_send(conn, gatt_read_mult_vl_rsp, params,
-			     gatt_read_mult_vl_encode,
-			     BT_ATT_OP_READ_MULT_VL_REQ,
-			     params->handle_count * sizeof(uint16_t));
+	BT_DBG("gatt_read_mult_vl_rsp: %p", (void *)gatt_read_mult_vl_rsp);
+	return gatt_req_send(conn, gatt_read_mult_vl_rsp, params, gatt_read_mult_vl_encode,
+			     BT_ATT_OP_READ_MULT_VL_REQ, params->handle_count * sizeof(uint16_t),
+			     params->channel_flags);
 }
 #endif /* CONFIG_BT_EATT */
 
@@ -4084,7 +4147,9 @@ static int gatt_read_encode(struct net_buf *buf, size_t len, void *user_data)
 int bt_gatt_read(struct bt_conn *conn, struct bt_gatt_read_params *params)
 {
 	__ASSERT(conn, "invalid parameters\n");
+	BT_DBG("params->func: %p", (void *)params->func);
 	__ASSERT(params && params->func, "invalid parameters\n");
+	BT_DBG("conn->state: %d, params->handle_count: %d", conn->state, params->handle_count);
 
 	if (conn->state != BT_CONN_CONNECTED) {
 		return -ENOTCONN;
@@ -4107,10 +4172,9 @@ int bt_gatt_read(struct bt_conn *conn, struct bt_gatt_read_params *params)
 	}
 
 	BT_DBG("handle 0x%04x", params->single.handle);
-
-	return gatt_req_send(conn, gatt_read_rsp, params, gatt_read_encode,
-			     BT_ATT_OP_READ_REQ,
-			     sizeof(struct bt_att_read_req));
+	BT_DBG("gatt_read_rsp: %p, params: %p", (void *)gatt_read_rsp, params);
+	return gatt_req_send(conn, gatt_read_rsp, params, gatt_read_encode, BT_ATT_OP_READ_REQ,
+			     sizeof(struct bt_att_read_req), params->channel_flags);
 }
 
 static void gatt_write_rsp(struct bt_conn *conn, uint8_t err, const void *pdu,
@@ -4186,11 +4250,14 @@ static int gatt_exec_encode(struct net_buf *buf, size_t len, void *user_data)
 static int gatt_exec_write(struct bt_conn *conn,
 			   struct bt_gatt_write_params *params)
 {
+	__ASSERT(conn, "invalid parameter\n");
+	BT_DBG("params->func: %p", (void *)params->func);
+	__ASSERT(params && params->func, "invalid parameters\n");
 	BT_DBG("");
-
+	BT_DBG("gatt_write_rsp: %p", (void *)gatt_write_rsp);
 	return gatt_req_send(conn, gatt_write_rsp, params, gatt_exec_encode,
-			     BT_ATT_OP_EXEC_WRITE_REQ,
-			     sizeof(struct bt_att_exec_write_req));
+			     BT_ATT_OP_EXEC_WRITE_REQ, sizeof(struct bt_att_exec_write_req),
+			     ATT_REQ_ATT | ATT_REQ_EATT);
 }
 
 static int gatt_cancel_encode(struct net_buf *buf, size_t len, void *user_data)
@@ -4206,11 +4273,14 @@ static int gatt_cancel_encode(struct net_buf *buf, size_t len, void *user_data)
 static int gatt_cancel_all_writes(struct bt_conn *conn,
 			   struct bt_gatt_write_params *params)
 {
+	__ASSERT(conn, "invalid parameter\n");
+	BT_DBG("params->func: %p", (void *)params->func);
+	__ASSERT(params && params->func, "invalid parameters\n");
 	BT_DBG("");
-
+	BT_DBG("gatt_write_rsp: %p", (void *)gatt_write_rsp);
 	return gatt_req_send(conn, gatt_write_rsp, params, gatt_cancel_encode,
-			     BT_ATT_OP_EXEC_WRITE_REQ,
-			     sizeof(struct bt_att_exec_write_req));
+			     BT_ATT_OP_EXEC_WRITE_REQ, sizeof(struct bt_att_exec_write_req),
+			     ATT_REQ_ATT | ATT_REQ_EATT);
 }
 
 static void gatt_prepare_write_rsp(struct bt_conn *conn, uint8_t err,
@@ -4299,6 +4369,9 @@ static int gatt_prepare_write_encode(struct net_buf *buf, size_t len,
 static int gatt_prepare_write(struct bt_conn *conn,
 			      struct bt_gatt_write_params *params)
 {
+	__ASSERT(conn, "invalid parameter\n");
+	BT_DBG("params->func: %p", (void *)params->func);
+	__ASSERT(params && params->func, "invalid parameters\n");
 	uint16_t len, req_len;
 
 	req_len = sizeof(struct bt_att_prepare_write_req);
@@ -4306,10 +4379,9 @@ static int gatt_prepare_write(struct bt_conn *conn,
 	len = bt_att_get_mtu(conn) - req_len - 1;
 	len = MIN(params->length, len);
 	len += req_len;
-
-	return gatt_req_send(conn, gatt_prepare_write_rsp, params,
-			     gatt_prepare_write_encode,
-			     BT_ATT_OP_PREPARE_WRITE_REQ, len);
+	BT_DBG("gatt_prepare_write_rsp: %p", (void *)gatt_prepare_write_rsp);
+	return gatt_req_send(conn, gatt_prepare_write_rsp, params, gatt_prepare_write_encode,
+			     BT_ATT_OP_PREPARE_WRITE_REQ, len, ATT_REQ_ATT | ATT_REQ_EATT);
 }
 
 static int gatt_write_encode(struct net_buf *buf, size_t len, void *user_data)
@@ -4335,6 +4407,7 @@ int bt_gatt_write(struct bt_conn *conn, struct bt_gatt_write_params *params)
 	size_t len;
 
 	__ASSERT(conn, "invalid parameters\n");
+	BT_DBG("params->func: %p", (void *)params->func);
 	__ASSERT(params && params->func, "invalid parameters\n");
 	__ASSERT(params->handle, "invalid parameters\n");
 
@@ -4350,9 +4423,9 @@ int bt_gatt_write(struct bt_conn *conn, struct bt_gatt_write_params *params)
 	}
 
 	BT_DBG("handle 0x%04x length %u", params->handle, params->length);
-
-	return gatt_req_send(conn, gatt_write_rsp, params, gatt_write_encode,
-			     BT_ATT_OP_WRITE_REQ, len);
+	BT_DBG("gatt_write_rsp: %p", (void *)gatt_write_rsp);
+	return gatt_req_send(conn, gatt_write_rsp, params, gatt_write_encode, BT_ATT_OP_WRITE_REQ,
+			     len, ATT_REQ_ATT | ATT_REQ_EATT);
 }
 
 static void gatt_write_ccc_rsp(struct bt_conn *conn, uint8_t err,
@@ -4412,9 +4485,9 @@ static int gatt_write_ccc(struct bt_conn *conn,
 	size_t len = sizeof(struct bt_att_write_req) + sizeof(uint16_t);
 
 	BT_DBG("handle 0x%04x value 0x%04x", params->ccc_handle, params->value);
-
-	return gatt_req_send(conn, gatt_write_ccc_rsp, params,
-			     gatt_write_ccc_buf, BT_ATT_OP_WRITE_REQ, len);
+	BT_DBG("gatt_write_ccc_rsp: %p", (void *)gatt_write_ccc_rsp);
+	return gatt_req_send(conn, gatt_write_ccc_rsp, params, gatt_write_ccc_buf,
+			     BT_ATT_OP_WRITE_REQ, len, ATT_REQ_ATT | ATT_REQ_EATT);
 }
 
 #if defined(CONFIG_BT_GATT_AUTO_DISCOVER_CCC)
@@ -5129,11 +5202,11 @@ int bt_gatt_store_ccc(uint8_t id, const bt_addr_le_t *addr)
 	       log_strdup(key));
 	if (len) {
 		for (size_t i = 0; i < save.count; i++) {
-			BT_DBG("  CCC: handle 0x%04x value 0x%04x",
-			       save.store[i].handle, save.store[i].value);
+			BT_DBG(" CCC: handle 0x%04x value 0x%04x", save.store[i].handle,
+			       save.store[i].value);
 		}
 	} else {
-		BT_DBG("  CCC: NULL");
+		BT_DBG(" CCC: NULL");
 	}
 
 	return 0;

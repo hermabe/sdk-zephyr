@@ -199,6 +199,9 @@ static void connect(uint8_t *data, uint16_t len)
 	bool ecfc = cmd->options & L2CAP_CONNECT_OPT_ECFC;
 	int err;
 
+	LOG_DBG("CMD: psm: %d, mtu: %d, num: %d, options: %d", cmd->psm, cmd->mtu, cmd->num,
+		cmd->options);
+
 	if (cmd->num == 0 || cmd->num > CHANNELS || mtu > DATA_MTU_INITIAL) {
 		goto fail;
 	}
@@ -213,6 +216,7 @@ static void connect(uint8_t *data, uint16_t len)
 	for (i = 0U; i < cmd->num; i++) {
 		chan = get_free_channel();
 		if (!chan) {
+			LOG_ERR("No unused channels");
 			goto fail;
 		}
 		chan->le.chan.ops = &l2cap_ops;
@@ -225,6 +229,7 @@ static void connect(uint8_t *data, uint16_t len)
 
 	if (cmd->num == 1 && !ecfc) {
 		err = bt_l2cap_chan_connect(conn, &chan->le.chan, cmd->psm);
+		LOG_DBG("bt_l2cap_chan_connect() returned %d", err);
 		if (err < 0) {
 			goto fail;
 		}
@@ -232,6 +237,7 @@ static void connect(uint8_t *data, uint16_t len)
 #if defined(CONFIG_BT_L2CAP_ECRED)
 		err = bt_l2cap_ecred_chan_connect(conn, allocated_channels,
 							cmd->psm);
+		LOG_DBG("bt_l2cap_ecred_chan_connect() returned %d", err);
 		if (err < 0) {
 			goto fail;
 		}
@@ -433,16 +439,20 @@ static int accept(struct bt_conn *conn, struct bt_l2cap_chan **l2cap_chan)
 {
 	struct channel *chan;
 
+	LOG_DBG("Accept() called");
 	chan = get_free_channel();
 	if (!chan) {
+		LOG_DBG("Failed to get free channel");
 		return -ENOMEM;
 	}
 
 	if (bt_conn_enc_key_size(conn) < req_keysize) {
 		req_keysize = 0;
+		LOG_DBG("Key size too short");
 		return -EPERM;
 	} else if (authorize_flag) {
 		authorize_flag = false;
+		LOG_DBG("Authorization failed");
 		return -EACCES;
 	}
 
@@ -451,6 +461,7 @@ static int accept(struct bt_conn *conn, struct bt_l2cap_chan **l2cap_chan)
 
 	*l2cap_chan = &chan->le.chan;
 
+	LOG_DBG("Accepted");
 	return 0;
 }
 
@@ -458,6 +469,9 @@ static void listen(uint8_t *data, uint16_t len)
 {
 	const struct l2cap_listen_cmd *cmd = (void *) data;
 	struct bt_l2cap_server *server;
+
+	LOG_DBG("CMD: psm: 0x%X, transport: %d, mtu: %d, response: 0x%X", cmd->psm, cmd->transport,
+		cmd->mtu, cmd->response);
 
 	/* TODO: Handle cmd->transport flag */
 
@@ -471,6 +485,7 @@ static void listen(uint8_t *data, uint16_t len)
 
 	server = get_free_server();
 	if (!server) {
+		LOG_DBG("No free server");
 		goto fail;
 	}
 
@@ -551,6 +566,7 @@ static void supported_commands(uint8_t *data, uint16_t len)
 void tester_handle_l2cap(uint8_t opcode, uint8_t index, uint8_t *data,
 			 uint16_t len)
 {
+	LOG_DBG("opcode %d received", opcode);
 	switch (opcode) {
 	case L2CAP_READ_SUPPORTED_COMMANDS:
 		supported_commands(data, len);

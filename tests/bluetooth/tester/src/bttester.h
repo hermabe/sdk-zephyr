@@ -551,6 +551,7 @@ struct gatt_read_cmd {
 	uint8_t address_type;
 	uint8_t address[6];
 	uint16_t handle;
+	uint8_t channel_flags;
 } __packed;
 struct gatt_read_rp {
 	uint8_t att_response;
@@ -564,6 +565,7 @@ struct gatt_read_uuid_cmd {
 	uint8_t address[6];
 	uint16_t start_handle;
 	uint16_t end_handle;
+	uint8_t channel_flags;
 	uint8_t uuid_length;
 	uint8_t uuid[];
 } __packed;
@@ -587,6 +589,7 @@ struct gatt_read_long_rp {
 } __packed;
 
 #define GATT_READ_MULTIPLE		0x14
+#define GATT_READ_MULTIPLE_VAR		0x20
 struct gatt_read_multiple_cmd {
 	uint8_t address_type;
 	uint8_t address[6];

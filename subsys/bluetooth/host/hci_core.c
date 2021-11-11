@@ -459,6 +459,7 @@ static void hci_acl(struct net_buf *buf)
 		net_buf_unref(buf);
 		return;
 	}
+	BT_DBG("Found conn %p for handle %u", conn, acl(buf)->handle);
 
 	acl(buf)->index = bt_conn_index(conn);
 

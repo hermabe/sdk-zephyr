@@ -1370,6 +1370,11 @@ struct bt_gatt_read_params {
 	 *  If equals to 0 by_uuid is used for Read Using Characteristic UUID.
 	 */
 	size_t handle_count;
+	enum {
+		ATT_REQ_ATT = (1 << 0),
+		ATT_REQ_EATT = (1 << 1),
+	} ATT_flags;
+	uint8_t channel_flags;
 	union {
 		struct {
 			/** Attribute handle. */

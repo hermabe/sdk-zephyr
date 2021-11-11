@@ -333,6 +333,9 @@ void tester_init(void)
 		    NULL, 0);
 }
 
+const char *bt_hex_real(const void *buf, size_t len);
+#define bt_hex(buf, len) log_strdup(bt_hex_real(buf, len))
+
 void tester_send(uint8_t service, uint8_t opcode, uint8_t index, uint8_t *data,
 		 size_t len)
 {
@@ -342,6 +345,8 @@ void tester_send(uint8_t service, uint8_t opcode, uint8_t index, uint8_t *data,
 	msg.opcode = opcode;
 	msg.index = index;
 	msg.len = len;
+
+	LOG_DBG("Sending. svc: %d, op: 0x%X, index: %d, len: %d, data: %s", service, opcode, index, len, bt_hex(data, len));
 
 	uart_send((uint8_t *)&msg, sizeof(msg));
 	if (data && len) {

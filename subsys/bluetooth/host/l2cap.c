@@ -348,6 +348,8 @@ void bt_l2cap_connected(struct bt_conn *conn)
 {
 	struct bt_l2cap_chan *chan;
 
+	BT_DBG("");
+
 	if (IS_ENABLED(CONFIG_BT_BREDR) &&
 	    conn->type == BT_CONN_TYPE_BR) {
 		bt_l2cap_br_connected(conn);
@@ -1038,7 +1040,7 @@ static bool l2cap_check_security(struct bt_conn *conn,
 	if (IS_ENABLED(CONFIG_BT_CONN_DISABLE_SECURITY)) {
 		return true;
 	}
-
+	BT_DBG("conn->sec_level: %d, server->sec_level: %d", conn->sec_level, server->sec_level);
 	return conn->sec_level >= server->sec_level;
 }
 
@@ -2411,6 +2413,7 @@ void bt_l2cap_recv(struct bt_conn *conn, struct net_buf *buf)
 		return;
 	}
 
+	BT_DBG("chan: %p", chan);
 	l2cap_chan_recv(chan, buf);
 }
 
@@ -2502,6 +2505,7 @@ void bt_l2cap_init(void)
 static int l2cap_le_connect(struct bt_conn *conn, struct bt_l2cap_le_chan *ch,
 			    uint16_t psm)
 {
+	BT_DBG("");
 	int err;
 
 	if (psm < L2CAP_LE_PSM_FIXED_START || psm > L2CAP_LE_PSM_DYN_END) {
@@ -2546,7 +2550,7 @@ fail:
 static int l2cap_ecred_init(struct bt_conn *conn,
 			       struct bt_l2cap_le_chan *ch, uint16_t psm)
 {
-
+	BT_DBG("");
 	if (psm < L2CAP_LE_PSM_FIXED_START || psm > L2CAP_LE_PSM_DYN_END) {
 		return -EINVAL;
 	}

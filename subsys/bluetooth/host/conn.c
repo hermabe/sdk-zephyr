@@ -308,11 +308,13 @@ static void bt_acl_recv(struct bt_conn *conn, struct net_buf *buf,
 	conn->rx = NULL;
 
 	BT_DBG("Successfully parsed %u byte L2CAP packet", buf->len);
+	BT_HEXDUMP_DBG(buf->data, buf->len, "L2CAP packet");
 	bt_l2cap_recv(conn, buf);
 }
 
 void bt_conn_recv(struct bt_conn *conn, struct net_buf *buf, uint8_t flags)
 {
+	BT_DBG("");
 	/* Make sure we notify any pending TX callbacks before processing
 	 * new data for this connection.
 	 */

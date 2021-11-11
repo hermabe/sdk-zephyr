@@ -26,6 +26,11 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
 #include "bttester.h"
 
+#ifndef bt_hex
+const char *bt_hex_real(const void *buf, size_t len);
+#define bt_hex(buf, len) log_strdup(bt_hex_real(buf, len))
+#endif
+
 #define CONTROLLER_INDEX 0
 #define MAX_BUFFER_SIZE 2048
 #define MAX_UUID_LEN 16
@@ -1355,6 +1360,7 @@ static struct bt_gatt_read_params read_params;
 
 static void read_destroy(struct bt_gatt_read_params *params)
 {
+	LOG_DBG("");
 	(void)memset(params, 0, sizeof(*params));
 	gatt_buf_clear();
 }
@@ -1364,6 +1370,8 @@ static uint8_t read_cb(struct bt_conn *conn, uint8_t err,
 		       uint16_t length)
 {
 	struct gatt_read_rp *rp = (void *) gatt_buf.buf;
+	LOG_DBG("rp: att_response: %d, data_length: %d, data: %s", rp->att_response,
+		rp->data_length, bt_hex(rp->data, rp->data_length));
 
 	/* Respond to the Lower Tester with ATT Error received */
 	if (err) {
@@ -1394,6 +1402,7 @@ static void read_data(uint8_t *data, uint16_t len)
 {
 	const struct gatt_read_cmd *cmd = (void *) data;
 	struct bt_conn *conn;
+	LOG_DBG("");
 
 	conn = bt_conn_lookup_addr_le(BT_ID_DEFAULT, (bt_addr_le_t *)data);
 	if (!conn) {
@@ -1408,11 +1417,14 @@ static void read_data(uint8_t *data, uint16_t len)
 	read_params.single.handle = sys_le16_to_cpu(cmd->handle);
 	read_params.single.offset = 0x0000;
 	read_params.func = read_cb;
+	read_params.channel_flags = cmd->channel_flags;
 
 	/* TODO should be handled as user_data via CONTAINER_OF macro */
 	btp_opcode = GATT_READ;
 
-	if (bt_gatt_read(conn, &read_params) < 0) {
+	int err = bt_gatt_read(conn, &read_params);
+	LOG_DBG("bt_gatt_read() : %d", err);
+	if (err < 0) {
 		read_destroy(&read_params);
 
 		goto fail;
@@ -1433,8 +1445,10 @@ static void read_uuid(uint8_t *data, uint16_t len)
 {
 	const struct gatt_read_uuid_cmd *cmd = (void *) data;
 	struct bt_conn *conn;
+	LOG_DBG("");
 
 	conn = bt_conn_lookup_addr_le(BT_ID_DEFAULT, (bt_addr_le_t *)data);
+	LOG_DBG("conn: %p", (void *)conn);
 	if (!conn) {
 		goto fail_conn;
 	}
@@ -1452,10 +1466,13 @@ static void read_uuid(uint8_t *data, uint16_t len)
 	read_params.by_uuid.start_handle = sys_le16_to_cpu(cmd->start_handle);
 	read_params.by_uuid.end_handle = sys_le16_to_cpu(cmd->end_handle);
 	read_params.func = read_cb;
+	read_params.channel_flags = cmd->channel_flags;
 
 	btp_opcode = GATT_READ_UUID;
 
-	if (bt_gatt_read(conn, &read_params) < 0) {
+	int err = bt_gatt_read(conn, &read_params);
+	LOG_DBG("bt_gatt_read() returned: %d", err);
+	if (err < 0) {
 		read_destroy(&read_params);
 
 		goto fail;
@@ -1465,9 +1482,11 @@ static void read_uuid(uint8_t *data, uint16_t len)
 
 	return;
 fail:
+	LOG_DBG("fail");
 	bt_conn_unref(conn);
 
 fail_conn:
+	LOG_DBG("fail_conn");
 	tester_rsp(BTP_SERVICE_ID_GATT, GATT_READ_UUID, CONTROLLER_INDEX,
 		   BTP_STATUS_FAILED);
 }
@@ -1490,6 +1509,7 @@ static void read_long(uint8_t *data, uint16_t len)
 	read_params.single.handle = sys_le16_to_cpu(cmd->handle);
 	read_params.single.offset = sys_le16_to_cpu(cmd->offset);
 	read_params.func = read_cb;
+	read_params.channel_flags = ATT_REQ_ATT | ATT_REQ_EATT;
 
 	/* TODO should be handled as user_data via CONTAINER_OF macro */
 	btp_opcode = GATT_READ_LONG;
@@ -1511,7 +1531,7 @@ fail_conn:
 		   BTP_STATUS_FAILED);
 }
 
-static void read_multiple(uint8_t *data, uint16_t len)
+static void read_multiple(uint8_t *data, uint16_t len, bool variable_length)
 {
 	const struct gatt_read_multiple_cmd *cmd = (void *) data;
 	uint16_t handles[cmd->handles_count];
@@ -1534,10 +1554,11 @@ static void read_multiple(uint8_t *data, uint16_t len)
 	read_params.func = read_cb;
 	read_params.handle_count = i;
 	read_params.multiple.handles = handles; /* not used in read func */
-	read_params.multiple.variable = false;
+	read_params.multiple.variable = variable_length;
+	read_params.channel_flags = ATT_REQ_ATT | ATT_REQ_EATT;
 
 	/* TODO should be handled as user_data via CONTAINER_OF macro */
-	btp_opcode = GATT_READ_MULTIPLE;
+	btp_opcode = variable_length ? GATT_READ_MULTIPLE_VAR : GATT_READ_MULTIPLE;
 
 	if (bt_gatt_read(conn, &read_params) < 0) {
 		gatt_buf_clear();
@@ -1583,6 +1604,7 @@ rsp:
 static void write_rsp(struct bt_conn *conn, uint8_t err,
 		      struct bt_gatt_write_params *params)
 {
+	LOG_DBG("");
 	tester_send(BTP_SERVICE_ID_GATT, GATT_WRITE, CONTROLLER_INDEX, &err,
 		    sizeof(err));
 }
@@ -1593,6 +1615,8 @@ static void write_data(uint8_t *data, uint16_t len)
 {
 	const struct gatt_write_cmd *cmd = (void *) data;
 	struct bt_conn *conn;
+
+	LOG_DBG("");
 
 	conn = bt_conn_lookup_addr_le(BT_ID_DEFAULT, (bt_addr_le_t *)data);
 	if (!conn) {
@@ -1605,7 +1629,9 @@ static void write_data(uint8_t *data, uint16_t len)
 	write_params.data = cmd->data;
 	write_params.length = sys_le16_to_cpu(cmd->data_length);
 
-	if (bt_gatt_write(conn, &write_params) < 0) {
+	int err = bt_gatt_write(conn, &write_params);
+	LOG_DBG("bt_gatt_write() returned: %d", err);
+	if (err < 0) {
 		bt_conn_unref(conn);
 		goto fail;
 	}
@@ -1973,6 +1999,7 @@ static void get_attr_val(uint8_t *data, uint16_t len)
 void tester_handle_gatt(uint8_t opcode, uint8_t index, uint8_t *data,
 			 uint16_t len)
 {
+	LOG_DBG("GATT opcode: 0x%X", opcode);
 	switch (opcode) {
 	case GATT_READ_SUPPORTED_COMMANDS:
 		supported_commands(data, len);
@@ -2029,7 +2056,10 @@ void tester_handle_gatt(uint8_t opcode, uint8_t index, uint8_t *data,
 		read_long(data, len);
 		return;
 	case GATT_READ_MULTIPLE:
-		read_multiple(data, len);
+		read_multiple(data, len, false);
+		return;
+	case GATT_READ_MULTIPLE_VAR:
+		read_multiple(data, len, true);
 		return;
 	case GATT_WRITE_WITHOUT_RSP:
 		write_without_rsp(data, len, opcode, false);
