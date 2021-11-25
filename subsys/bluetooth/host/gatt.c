@@ -788,7 +788,14 @@ static ssize_t db_hash_read(struct bt_conn *conn,
 	 * The client reads the Database Hash characteristic and then the server
 	 * receives another ATT request from the client.
 	 */
-	(void)bt_gatt_change_aware(conn, true);
+	// (void)bt_gatt_change_aware(conn, true);
+	struct gatt_cf_cfg *cfg = find_cf_cfg(conn);
+	if (cfg && CF_ROBUST_CACHING(cfg) && !atomic_test_bit(cfg->flags, CF_CHANGE_AWARE) &&
+	    atomic_test_bit(cfg->flags, CF_OUT_OF_SYNC)) {
+		atomic_clear_bit(cfg->flags, CF_OUT_OF_SYNC);
+		atomic_set_bit(cfg->flags, CF_CHANGE_AWARE);
+		BT_DBG("%s change-aware", bt_addr_le_str(&cfg->peer));
+	}
 
 	return bt_gatt_attr_read(conn, attr, buf, len, offset, db_hash.hash,
 				 sizeof(db_hash.hash));
@@ -980,10 +987,13 @@ static void sc_indicate_rsp(struct bt_conn *conn,
 	 * A connected client becomes change-aware when...
 	 * The client receives and confirms a Service Changed indication.
 	 */
-	cfg = find_cf_cfg(conn);
-	if (cfg && CF_ROBUST_CACHING(cfg)) {
-		atomic_set_bit(cfg->flags, CF_CHANGE_AWARE);
-		BT_DBG("%s change-aware", bt_addr_le_str(&cfg->peer));
+	// TODO: Update spec reference to 5.3
+	if (bt_conn_num_ATT_bearers(conn) == 1) {
+		cfg = find_cf_cfg(conn);
+		if (cfg && CF_ROBUST_CACHING(cfg)) {
+			atomic_set_bit(cfg->flags, CF_CHANGE_AWARE);
+			BT_DBG("%s change-aware", bt_addr_le_str(&cfg->peer));
+		}
 	}
 #endif
 }
@@ -2468,10 +2478,13 @@ static void sc_restore_rsp(struct bt_conn *conn,
 	 * A connected client becomes change-aware when...
 	 * The client receives and confirms a Service Changed indication.
 	 */
-	cfg = find_cf_cfg(conn);
-	if (cfg && CF_ROBUST_CACHING(cfg)) {
-		atomic_set_bit(cfg->flags, CF_CHANGE_AWARE);
-		BT_DBG("%s change-aware", bt_addr_le_str(&cfg->peer));
+	// TODO: Update spec reference to 5.3
+	if (bt_conn_num_ATT_bearers(conn) == 1) {
+		cfg = find_cf_cfg(conn);
+		if (cfg && CF_ROBUST_CACHING(cfg)) {
+			atomic_set_bit(cfg->flags, CF_CHANGE_AWARE);
+			BT_DBG("%s change-aware", bt_addr_le_str(&cfg->peer));
+		}
 	}
 #endif
 }
@@ -3849,7 +3862,22 @@ static void parse_read_by_uuid(struct bt_conn *conn,
 	if (bt_gatt_read(conn, params) < 0) {
 		params->func(conn, BT_ATT_ERR_UNLIKELY, params, NULL, 0);
 	}
+
+#ifdef CONFIG_BT_GATT_CACHING
+	if (bt_uuid_cmp(params->by_uuid.uuid, BT_UUID_GATT_DB_HASH) == 0) {
+		bt_conn_set_att_change_aware(conn);
+	}
+#endif /* CONFIG_BT_GATT_CACHING */
+
 }
+
+#ifdef CONFIG_BT_GATT_CACHING
+bool bt_gatt_is_req_db_hash_read(struct bt_gatt_read_params *params)
+{
+	return params->handle_count == 0 && bt_uuid_cmp(params->by_uuid.uuid, BT_UUID_GATT_DB_HASH) == 0;
+}
+
+#endif
 
 static void gatt_read_rsp(struct bt_conn *conn, uint8_t err, const void *pdu,
 			  uint16_t length, void *user_data)
@@ -4973,7 +5001,9 @@ bool bt_gatt_change_aware(struct bt_conn *conn, bool req)
 	 * Database Out Of Sync and then the server receives another ATT
 	 * request from the client.
 	 */
-	if (atomic_test_bit(cfg->flags, CF_OUT_OF_SYNC)) {
+	// TODO: Update spec reference to 5.3
+
+	if (atomic_test_bit(cfg->flags, CF_OUT_OF_SYNC) && bt_conn_num_ATT_bearers(conn) == 1) {
 		atomic_clear_bit(cfg->flags, CF_OUT_OF_SYNC);
 		atomic_set_bit(cfg->flags, CF_CHANGE_AWARE);
 		BT_DBG("%s change-aware", bt_addr_le_str(&cfg->peer));

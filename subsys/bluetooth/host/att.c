@@ -92,6 +92,13 @@ struct bt_att_chan {
 	sys_snode_t		node;
 };
 
+#ifdef CONFIG_BT_GATT_CACHING
+enum {
+	BT_ATT_CHANGE_AWARE,
+	BT_ATT_NUM_FLAGS,
+};
+#endif /* CONFIG_BT_GATT_CACHING */
+
 /* ATT connection specific data */
 struct bt_att {
 	struct bt_conn		*conn;
@@ -103,6 +110,9 @@ struct bt_att {
 #endif
 	/* Contains bt_att_chan instance(s) */
 	sys_slist_t		chans;
+#ifdef CONFIG_BT_GATT_CACHING
+	ATOMIC_DEFINE(flags, BT_ATT_NUM_FLAGS);
+#endif /* CONFIG_BT_GATT_CACHING */
 };
 
 K_MEM_SLAB_DEFINE(att_slab, sizeof(struct bt_att),
@@ -227,6 +237,55 @@ static int process_queue(struct bt_att_chan *chan, struct k_fifo *queue)
 
 	return -ENOENT;
 }
+
+#ifdef CONFIG_BT_GATT_CACHING
+static bool att_any_pending_reqs(struct bt_att *att)
+{
+	struct bt_att_chan *chan, *tmp;
+	SYS_SLIST_FOR_EACH_CONTAINER_SAFE(&att->chans, chan, tmp, node) {
+		if (chan->req) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool should_delay_db_hash_read(struct bt_att *att, struct bt_att_req *req){
+	struct bt_conn *conn = att->conn;
+
+	BT_DBG("");
+
+
+	/* BLUETOOTH CORE SPECIFICATION Version 5.3 | Vol 3, Part G page 1475:
+	* 2.5.2.1 Robust Caching
+	* A change-unaware client using multiple ATT bearers shall wait until
+	* the server has responded to all pending requests before reading
+	* the Database Hash characteristic.
+	*/
+	bool bt_gatt_is_req_db_hash_read(void *req);
+
+	bool out_of_sync = !atomic_test_bit(att->flags, BT_ATT_CHANGE_AWARE) ;
+	int num_bearers = bt_conn_num_ATT_bearers(conn);
+	bool pending = att_any_pending_reqs(att);
+	bool uuid_read = req->att_op == BT_ATT_OP_READ_TYPE_REQ ;
+
+	BT_DBG("out_of_sync: %d", out_of_sync);
+	BT_DBG("num_bearers: %d", num_bearers);
+	BT_DBG("pending: %d", pending);
+	BT_DBG("uuid_read: %d", uuid_read);
+	bool db_hash_read = bt_gatt_is_req_db_hash_read(req->user_data);
+	BT_DBG("db_hash_read: %d", db_hash_read);
+
+
+	if (!atomic_test_bit(att->flags, BT_ATT_CHANGE_AWARE) &&
+	    bt_conn_num_ATT_bearers(conn) > 1 && att_any_pending_reqs(att) &&
+	    req->att_op == BT_ATT_OP_READ_TYPE_REQ && bt_gatt_is_req_db_hash_read(req->user_data)) {
+		BT_DBG("Skipping sending req");
+		return true;
+	}
+	return false;
+}
+#endif /* CONFIG_BT_GATT_CACHING */
 
 /* Send requests without taking tx_sem */
 static int chan_req_send(struct bt_att_chan *chan, struct bt_att_req *req)
@@ -580,12 +639,19 @@ static void att_req_send_process(struct bt_att *att)
 		return;
 	}
 
-	BT_DBG("req %p", ATT_REQ(node));
+	struct bt_att_req *req = ATT_REQ(node);
+
+	BT_DBG("req %p", req);
+
+	if (should_delay_db_hash_read(att, req)){
+		sys_slist_prepend(&att->reqs, &req->node);
+		return;
+	}
 
 	SYS_SLIST_FOR_EACH_CONTAINER_SAFE(&att->chans, chan, tmp, node) {
 		/* If there is nothing pending use the channel */
 		if (!chan->req) {
-			if (bt_att_chan_req_send(chan, ATT_REQ(node)) >= 0) {
+			if (bt_att_chan_req_send(chan, req) >= 0) {
 				return;
 			}
 		}
@@ -2072,6 +2138,16 @@ static uint8_t att_error_rsp(struct bt_att_chan *chan, struct net_buf *buf)
 	}
 #endif /* CONFIG_BT_SMP */
 
+#ifdef CONFIG_BT_GATT_CACHING
+	if (err == BT_ATT_ERR_DB_OUT_OF_SYNC) {
+		BT_DBG("Clearing BT_ATT_CHANGE_AWARE");
+		atomic_clear_bit(chan->att->flags, BT_ATT_CHANGE_AWARE);
+	}
+
+	att_send_process(chan->att);
+
+#endif /* CONFIG_BT_GATT_CACHING */
+
 done:
 	return att_handle_rsp(chan, NULL, 0, err);
 }
@@ -2846,6 +2922,9 @@ static int bt_att_accept(struct bt_conn *conn, struct bt_l2cap_chan **ch)
 	att->conn = conn;
 	sys_slist_init(&att->reqs);
 	sys_slist_init(&att->chans);
+#ifdef CONFIG_BT_GATT_CACHING
+	atomic_set_bit(att->flags, BT_ATT_CHANGE_AWARE);
+#endif /* CONFIG_BT_GATT_CACHING */
 
 	chan = att_chan_new(att, 0);
 	if (!chan) {

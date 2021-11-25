@@ -304,3 +304,5 @@ int bt_eatt_connect(struct bt_conn *conn, uint8_t num_channels);
 
 /* Disconnect EATT channels */
 int bt_eatt_disconnect(struct bt_conn *conn);
+
+void bt_conn_set_att_change_aware(struct bt_conn *conn);
