@@ -360,3 +360,10 @@ void l2cap_br_encrypt_change(struct bt_conn *conn, uint8_t hci_status);
 
 /* Handle received data */
 void bt_l2cap_br_recv(struct bt_conn *conn, struct net_buf *buf);
+
+struct bt_l2cap_cb {
+	void (*ecred_channels_connect_rsp)(struct bt_conn *conn, uint16_t result);
+	void (*ecred_channels_connect_req)(struct bt_conn *conn, uint16_t result);
+};
+
+void register_l2cap_callbacks(struct bt_l2cap_cb cb);

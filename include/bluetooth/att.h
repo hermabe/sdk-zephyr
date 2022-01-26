@@ -54,9 +54,14 @@ extern "C" {
 #define BT_ATT_LAST_ATTRIBUTE_HANDLE            0xffff
 #define BT_ATT_LAST_ATTTRIBUTE_HANDLE __DEPRECATED_MACRO BT_ATT_LAST_ATTRIBUTE_HANDLE
 
+#if defined(CONFIG_BT_EATT)
 #if defined(CONFIG_BT_TESTING)
 int bt_eatt_disconnect_one(struct bt_conn *conn);
+int bt_eatt_connect(struct bt_conn *conn, uint8_t num_channels);
 #endif /* CONFIG_BT_TESTING */
+
+uint16_t bt_att_num_enhanced_bearers(struct bt_conn *conn);
+#endif /* CONFIG_BT_EATT */
 
 #ifdef __cplusplus
 }

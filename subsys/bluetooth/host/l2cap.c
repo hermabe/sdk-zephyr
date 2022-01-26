@@ -82,7 +82,13 @@ struct bt_l2cap {
 	struct bt_l2cap_le_chan	chan;
 };
 
+static struct bt_l2cap_cb l2cap_callbacks;
 static struct bt_l2cap bt_l2cap_pool[CONFIG_BT_MAX_CONN];
+
+void register_l2cap_callbacks(struct bt_l2cap_cb cb)
+{
+	l2cap_callbacks = cb;
+}
 
 static uint8_t get_ident(void)
 {
@@ -1240,6 +1246,9 @@ response:
 				      sizeof(*rsp) +
 				      (sizeof(scid) * req_cid_count));
 	if (!buf) {
+		if (l2cap_callbacks.ecred_channels_connect_req) {
+			l2cap_callbacks.ecred_channels_connect_req(conn, result);
+		}
 		return;
 	}
 
@@ -1255,6 +1264,9 @@ response:
 	net_buf_add_mem(buf, dcid, sizeof(scid) * req_cid_count);
 
 	l2cap_send(conn, BT_L2CAP_CID_LE_SIG, buf);
+	if (l2cap_callbacks.ecred_channels_connect_req) {
+		l2cap_callbacks.ecred_channels_connect_req(conn, result);
+	}
 }
 
 static void le_ecred_reconf_req(struct bt_l2cap *l2cap, uint8_t ident,
@@ -1596,6 +1608,10 @@ static void le_ecred_conn_rsp(struct bt_l2cap *l2cap, uint8_t ident,
 			bt_l2cap_chan_del(&chan->chan);
 		}
 		break;
+	}
+
+	if (l2cap_callbacks.ecred_channels_connect_rsp) {
+		l2cap_callbacks.ecred_channels_connect_rsp(conn, result);
 	}
 }
 #endif /* CONFIG_BT_L2CAP_ECRED */
