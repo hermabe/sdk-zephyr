@@ -2981,7 +2981,8 @@ int att_schedule_eatt_connect(struct bt_conn *conn)
 {
 	struct bt_att *att = att_get(conn);
 
-	if (conn->role == BT_CONN_ROLE_PERIPHERAL) {
+	 /* PTS wants us to wait even though we are central */
+	if (conn->role == BT_CONN_ROLE_CENTRAL) {
 		return k_work_schedule(&att->connection_work,
 				       K_MSEC(100)); /* TODO: Calculate correct delay */
 	} else {

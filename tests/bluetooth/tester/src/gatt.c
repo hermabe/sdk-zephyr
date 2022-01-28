@@ -11,6 +11,7 @@
 #include <errno.h>
 
 #include <toolchain.h>
+#include <bluetooth/att.h>
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/conn.h>
 #include <bluetooth/gatt.h>
@@ -1971,6 +1972,29 @@ static void get_attr_val(uint8_t *data, uint16_t len)
 	}
 }
 
+static void eatt_connect(uint8_t *data, uint16_t len)
+{
+	const struct gatt_eatt_connect_cmd *cmd = (void *)data;
+	struct net_buf_simple *buf = NET_BUF_SIMPLE(BTP_DATA_MAX_SIZE);
+	uint8_t num = sys_le16_to_cpu(cmd->num);
+	struct bt_conn *conn;
+
+	conn = bt_conn_lookup_addr_le(BT_ID_DEFAULT, (bt_addr_le_t *)cmd);
+	LOG_DBG("conn: %p, num: %d", &conn, num);
+
+	net_buf_simple_init(buf, 0);
+
+	int err = bt_eatt_connect(conn, num);
+
+	if (err < 0) {
+		tester_rsp(BTP_SERVICE_ID_GATT, GATT_EATT_CONNECT, CONTROLLER_INDEX,
+			   BTP_STATUS_SUCCESS);
+	} else {
+		tester_rsp(BTP_SERVICE_ID_GATT, GATT_EATT_CONNECT, CONTROLLER_INDEX,
+			   BTP_STATUS_FAILED);
+	}
+}
+
 void tester_handle_gatt(uint8_t opcode, uint8_t index, uint8_t *data,
 			 uint16_t len)
 {
@@ -2054,6 +2078,9 @@ void tester_handle_gatt(uint8_t opcode, uint8_t index, uint8_t *data,
 		return;
 	case GATT_GET_ATTRIBUTE_VALUE:
 		get_attr_val(data, len);
+		return;
+	case GATT_EATT_CONNECT:
+		eatt_connect(data, len);
 		return;
 	default:
 		tester_rsp(BTP_SERVICE_ID_GATT, opcode, index,
