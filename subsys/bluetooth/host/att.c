@@ -3028,11 +3028,6 @@ int bt_eatt_connect(struct bt_conn *conn, uint8_t num_channels)
 		return -ENOMEM;
 	}
 
-	register_l2cap_callbacks((struct bt_l2cap_cb){
-		.ecred_channels_connect_rsp = ecred_connect_cb,
-		.ecred_channels_connect_req = ecred_connect_cb,
-	});
-
 	return bt_l2cap_ecred_chan_connect(conn, chan, BT_EATT_PSM);
 }
 
@@ -3114,6 +3109,11 @@ static void bt_eatt_init(void)
 	if (err < 0) {
 		BT_ERR("EATT Server registration failed %d", err);
 	}
+
+	register_l2cap_callbacks((struct bt_l2cap_cb){
+		.ecred_channels_connect_rsp = ecred_connect_cb,
+		.ecred_channels_connect_req = ecred_connect_cb,
+	});
 }
 
 void bt_att_init(void)

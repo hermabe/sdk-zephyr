@@ -1246,10 +1246,7 @@ response:
 				      sizeof(*rsp) +
 				      (sizeof(scid) * req_cid_count));
 	if (!buf) {
-		if (l2cap_callbacks.ecred_channels_connect_req) {
-			l2cap_callbacks.ecred_channels_connect_req(conn, result);
-		}
-		return;
+		goto callback;
 	}
 
 	rsp = net_buf_add(buf, sizeof(*rsp));
@@ -1264,6 +1261,8 @@ response:
 	net_buf_add_mem(buf, dcid, sizeof(scid) * req_cid_count);
 
 	l2cap_send(conn, BT_L2CAP_CID_LE_SIG, buf);
+
+callback:
 	if (l2cap_callbacks.ecred_channels_connect_req) {
 		l2cap_callbacks.ecred_channels_connect_req(conn, result);
 	}

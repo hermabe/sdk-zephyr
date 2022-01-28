@@ -11,6 +11,7 @@
 #define ZEPHYR_INCLUDE_BLUETOOTH_ATT_H_
 
 #include <sys/slist.h>
+#include <bluetooth/conn.h>
 
 #ifdef __cplusplus
 extern "C" {
