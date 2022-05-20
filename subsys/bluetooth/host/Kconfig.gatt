@@ -82,6 +82,11 @@ config BT_GATT_AUTO_SEC_REQ
 	  commercially available central devices that react negatively to
 	  receiving a Security Request immediately after reconnection.
 
+config BT_RETRY_ON_SEC_ERR
+	bool "Auto retry on sec err"
+	default y
+	depends on BT_SMP
+
 config BT_GATT_SERVICE_CHANGED
 	bool "GATT Service Changed support"
 	default y
