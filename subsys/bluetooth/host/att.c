@@ -3046,6 +3046,8 @@ static void att_enhanced_connection_work_handler(struct k_work *work)
 	if (err < 0) {
 		BT_WARN("Failed to connect %d EATT channels (err: %d)",
 			att->eatt.chans_to_connect, err);
+	} else {
+		BT_DBG("Connection of %d EATT channels succeeded", att->eatt.chans_to_connect);
 	}
 
 }
@@ -3103,6 +3105,7 @@ static k_timeout_t credit_based_connection_delay(struct bt_conn *conn)
 	 */
 
 	if (IS_ENABLED(CONFIG_BT_CENTRAL) && conn->role == BT_CONN_ROLE_CENTRAL) {
+		BT_DBG("Central, no need to wait");
 		return K_NO_WAIT;
 	} else if (IS_ENABLED(CONFIG_BT_PERIPHERAL)) {
 		uint8_t random;
@@ -3117,6 +3120,7 @@ static k_timeout_t credit_based_connection_delay(struct bt_conn *conn)
 		const uint32_t calculated_delay =
 			2 * (conn->le.latency + 1) * BT_CONN_INTERVAL_TO_MS(conn->le.interval);
 
+		BT_DBG("Peripheral, waiting %d ms", MAX(100, calculated_delay + rand_delay));
 		return K_MSEC(MAX(100, calculated_delay + rand_delay));
 	}
 
@@ -3162,6 +3166,8 @@ static void handle_potential_collision(struct bt_att *att)
 		err = att_schedule_eatt_connect(att->conn, to_connect);
 		if (err < 0) {
 			BT_ERR("Failed to schedule EATT connection retry (err: %d)", err);
+		} else {
+			BT_DBG("Scheduling of EATT connection of %d channels succeded", to_connect);
 		}
 	}
 }
