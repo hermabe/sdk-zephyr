@@ -2475,7 +2475,7 @@ struct bt_le_per_adv_sync_subevent_params {
 	uint8_t num_subevents;
 
 	/** The subevent(s) to synchronize with */
-	const uint8_t *subevents;
+	uint8_t *subevents;
 };
 
 /** @brief Synchronize with a subset of subevents

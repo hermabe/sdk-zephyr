@@ -165,6 +165,8 @@ static inline const char *state2str(bt_conn_state_t state)
 		return "connecting-dir-adv";
 	case BT_CONN_CONNECTING_ADV:
 		return "connecting-adv";
+	case BT_CONN_CONNECTING_SYNCED:
+		return "connecting-synced";
 	case BT_CONN_CONNECTING_AUTO:
 		return "connecting-auto";
 	case BT_CONN_CONNECTING:
@@ -1012,6 +1014,14 @@ void bt_conn_set_state(struct bt_conn *conn, bt_conn_state_t state)
 			 */
 			bt_conn_unref(conn);
 			break;
+		case BT_CONN_CONNECTING_SYNCED:
+			/* This cannot happen I think?
+			 */
+			/* For debug */
+			LOG_ERR("Disconnecting conn-synced");
+
+			bt_conn_unref(conn);
+			break;
 		case BT_CONN_CONNECTED:
 			/* Can only happen if bt_conn_cleanup_all is called
 			 * whilst in a connection.
@@ -1032,6 +1042,8 @@ void bt_conn_set_state(struct bt_conn *conn, bt_conn_state_t state)
 		break;
 	case BT_CONN_CONNECTING_DIR_ADV:
 		break;
+	case BT_CONN_CONNECTING_SYNCED:
+		break;
 	case BT_CONN_CONNECTING:
 		if (conn->type == BT_CONN_TYPE_SCO) {
 			break;
@@ -1040,7 +1052,7 @@ void bt_conn_set_state(struct bt_conn *conn, bt_conn_state_t state)
 		 * Timer is needed only for LE. For other link types controller
 		 * will handle connection timeout.
 		 */
-		if (IS_ENABLED(CONFIG_BT_CENTRAL) &&
+		if (false && IS_ENABLED(CONFIG_BT_CENTRAL) &&
 		    conn->type == BT_CONN_TYPE_LE) {
 			k_work_schedule(&conn->deferred_work,
 					K_MSEC(10 * bt_dev.create_param.timeout));
@@ -1538,7 +1550,7 @@ bool le_param_req(struct bt_conn *conn, struct bt_le_conn_param *param)
 static int send_conn_le_param_update(struct bt_conn *conn,
 				const struct bt_le_conn_param *param)
 {
-	LOG_DBG("conn %p features 0x%02x params (%d-%d %d %d)", conn, conn->le.features[0],
+	LOG_WRN("conn %p features 0x%02x params (%d-%d %d %d)", conn, conn->le.features[0],
 		param->interval_min, param->interval_max, param->latency, param->timeout);
 
 	/* Proceed only if connection parameters contains valid values*/
@@ -2308,6 +2320,7 @@ static enum bt_conn_state conn_internal_to_public_state(bt_conn_state_t state)
 	case BT_CONN_CONNECTING_AUTO:
 	case BT_CONN_CONNECTING_ADV:
 	case BT_CONN_CONNECTING_DIR_ADV:
+	case BT_CONN_CONNECTING_SYNCED:
 	case BT_CONN_CONNECTING:
 		return BT_CONN_STATE_CONNECTING;
 	case BT_CONN_CONNECTED:
@@ -2694,24 +2707,15 @@ int bt_conn_create_auto_stop(void)
 }
 #endif /* defined(CONFIG_BT_FILTER_ACCEPT_LIST) */
 
-int bt_conn_le_create(const bt_addr_le_t *peer,
-		      const struct bt_conn_le_create_param *create_param,
-		      const struct bt_le_conn_param *conn_param,
-		      struct bt_conn **ret_conn)
+static int conn_le_create_common_checks(const bt_addr_le_t *peer,
+					const struct bt_le_conn_param *conn_param)
 {
-	struct bt_conn *conn;
-	bt_addr_le_t dst;
-	int err;
 
 	if (!atomic_test_bit(bt_dev.flags, BT_DEV_READY)) {
 		return -EAGAIN;
 	}
 
 	if (!bt_le_conn_params_valid(conn_param)) {
-		return -EINVAL;
-	}
-
-	if (!create_param_validate(create_param)) {
 		return -EINVAL;
 	}
 
@@ -2731,8 +2735,16 @@ int bt_conn_le_create(const bt_addr_le_t *peer,
 		return -EINVAL;
 	}
 
-	if (peer->type == BT_ADDR_LE_PUBLIC_ID ||
-	    peer->type == BT_ADDR_LE_RANDOM_ID) {
+	return 0;
+}
+
+static struct bt_conn *conn_le_create_helper(const bt_addr_le_t *peer,
+				     const struct bt_le_conn_param *conn_param)
+{
+	bt_addr_le_t dst;
+	struct bt_conn *conn;
+
+	if (peer->type == BT_ADDR_LE_PUBLIC_ID || peer->type == BT_ADDR_LE_RANDOM_ID) {
 		bt_addr_le_copy(&dst, peer);
 		dst.type -= BT_ADDR_LE_PUBLIC_ID;
 	} else {
@@ -2742,10 +2754,34 @@ int bt_conn_le_create(const bt_addr_le_t *peer,
 	/* Only default identity supported for now */
 	conn = bt_conn_add_le(BT_ID_DEFAULT, &dst);
 	if (!conn) {
-		return -ENOMEM;
+		return NULL;
 	}
 
 	bt_conn_set_param_le(conn, conn_param);
+
+	return conn;
+}
+
+int bt_conn_le_create(const bt_addr_le_t *peer, const struct bt_conn_le_create_param *create_param,
+		      const struct bt_le_conn_param *conn_param, struct bt_conn **ret_conn)
+{
+	struct bt_conn *conn;
+	int err;
+
+	err = conn_le_create_common_checks(peer, conn_param);
+	if (err) {
+		return err;
+	}
+
+	if (!create_param_validate(create_param)) {
+		return -EINVAL;
+	}
+
+	conn = conn_le_create_helper(peer, conn_param);
+	if (!conn) {
+		return -ENOMEM;
+	}
+
 	create_param_setup(create_param);
 
 #if defined(CONFIG_BT_SMP)
@@ -2776,6 +2812,50 @@ int bt_conn_le_create(const bt_addr_le_t *peer,
 		bt_conn_unref(conn);
 
 		bt_le_scan_update(false);
+		return err;
+	}
+
+	*ret_conn = conn;
+	return 0;
+}
+
+int bt_conn_le_create_synced(const struct bt_le_ext_adv *adv,
+			     const struct bt_conn_le_create_synced_param *synced_param,
+			     const struct bt_le_conn_param *conn_param, struct bt_conn **ret_conn)
+{
+	struct bt_conn *conn;
+	int err;
+
+	err = conn_le_create_common_checks(synced_param->peer, conn_param);
+	if (err) {
+		return err;
+	}
+
+	if (!atomic_test_bit(adv->flags, BT_PER_ADV_ENABLED)) {
+		return -EINVAL;
+	}
+
+	if (!BT_FEAT_LE_PAWR_ADVERTISER(bt_dev.le.features)) {
+		return -ENOTSUP;
+	}
+
+	if (synced_param->subevent >= BT_HCI_PAWR_SUBEVENT_MAX) {
+		return -EINVAL;
+	}
+
+	conn = conn_le_create_helper(synced_param->peer, conn_param);
+	if (!conn) {
+		return -ENOMEM;
+	}
+
+	bt_conn_set_state(conn, BT_CONN_CONNECTING);
+
+	err = bt_le_create_conn_synced(conn, adv, synced_param->subevent);
+	if (err) {
+		conn->err = 0;
+		bt_conn_set_state(conn, BT_CONN_DISCONNECTED);
+		bt_conn_unref(conn);
+
 		return err;
 	}
 

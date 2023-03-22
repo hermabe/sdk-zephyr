@@ -694,6 +694,10 @@ void bt_hci_le_adv_ext_report(struct net_buf *buf)
 static void per_adv_sync_delete(struct bt_le_per_adv_sync *per_adv_sync)
 {
 	atomic_clear(per_adv_sync->flags);
+
+	if (per_adv_sync->conn && per_adv_sync->conn->state == BT_CONN_CONNECTING_SYNCED) {
+		bt_conn_unref(per_adv_sync->conn);
+	}
 }
 
 static struct bt_le_per_adv_sync *per_adv_sync_new(void)
@@ -1031,6 +1035,16 @@ static void bt_hci_le_per_adv_sync_established_common(struct net_buf *buf)
 	SYS_SLIST_FOR_EACH_CONTAINER(&pa_sync_cbs, listener, node) {
 		if (listener->synced) {
 			listener->synced(pending_per_adv_sync, &sync_info);
+		}
+	}
+
+	if (IS_ENABLED(CONFIG_BT_PER_ADV_SYNC_RSP) && evt->num_subevents) {
+		/* Create connection object to be able to establish connections */
+		pending_per_adv_sync->conn = bt_conn_add_le(BT_ID_DEFAULT, BT_ADDR_LE_ANY);
+		if (pending_per_adv_sync->conn) {
+			bt_conn_set_state(pending_per_adv_sync->conn, BT_CONN_CONNECTING_SYNCED);
+		} else {
+			LOG_ERR("Unable to allocate connection for sync");
 		}
 	}
 }

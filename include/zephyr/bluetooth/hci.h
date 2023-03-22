@@ -33,6 +33,10 @@ extern "C" {
 #define BT_ENC_KEY_SIZE_MIN                     0x07
 #define BT_ENC_KEY_SIZE_MAX                     0x10
 
+#define BT_HCI_ADV_HANDLE_INVALID 0xff
+#define BT_HCI_SYNC_HANDLE_INVALID 0xffff
+#define BT_HCI_PAWR_SUBEVENT_MAX 128
+
 struct bt_hci_evt_hdr {
 	uint8_t  evt;
 	uint8_t  len;
@@ -1474,6 +1478,7 @@ struct bt_hci_cp_le_set_ext_scan_enable {
 } __packed;
 
 #define BT_HCI_OP_LE_EXT_CREATE_CONN            BT_OP(BT_OGF_LE, 0x0043)
+#define BT_HCI_OP_LE_EXT_CREATE_CONN_V2         BT_OP(BT_OGF_LE, 0x0085)
 struct bt_hci_ext_conn_phy {
 	uint16_t scan_interval;
 	uint16_t scan_window;
@@ -1486,6 +1491,16 @@ struct bt_hci_ext_conn_phy {
 } __packed;
 
 struct bt_hci_cp_le_ext_create_conn {
+	uint8_t      filter_policy;
+	uint8_t      own_addr_type;
+	bt_addr_le_t peer_addr;
+	uint8_t      phys;
+	struct bt_hci_ext_conn_phy p[0];
+} __packed;
+
+struct bt_hci_cp_le_ext_create_conn_v2 {
+	uint8_t      adv_handle;
+	uint8_t      subevent;
 	uint8_t      filter_policy;
 	uint8_t      own_addr_type;
 	bt_addr_le_t peer_addr;

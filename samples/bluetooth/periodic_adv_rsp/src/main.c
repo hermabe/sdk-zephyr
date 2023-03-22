@@ -5,6 +5,7 @@
  */
 
 #include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/conn.h>
 
 static uint8_t mfg_data[5][5];
 
@@ -74,16 +75,62 @@ static bool print_ad_field(struct bt_data *data, void *user_data)
 	return true;
 }
 
+static size_t responses_received;
+/* TODO: Get the address from somewhere */
+static const bt_addr_le_t peer_addr = {
+	.type = BT_ADDR_LE_PUBLIC,
+	.a = {{0x11, 0x22, 0x33, 0x44, 0x55, 0x66}},
+};
+
+struct bt_conn *conn;
+
 static void response(struct bt_le_ext_adv *adv, struct bt_le_per_adv_response_info *info,
 		     struct net_buf_simple *buf)
 {
 	printk("Response: subevent %d, response slot %d\n", info->subevent, info->response_slot);
-	bt_data_parse(buf, print_ad_field, NULL);
+	// bt_data_parse(buf, print_ad_field, NULL);
+
+	responses_received++;
+
+	/* Delay the connection attempt a bit */
+	if (!conn && ((responses_received % 10) == 0)) {
+		struct bt_conn_le_create_synced_param params;
+		int err;
+
+		params.subevent = 2;
+		params.peer = &peer_addr;
+
+		err = bt_conn_le_create_synced(adv, &params, BT_LE_CONN_PARAM_DEFAULT, &conn);
+		if (err) {
+			printk("Failed to initiate connection (err %d)\n", err);
+		} else {
+			printk("Connection initiated at subevent %d\n", params.subevent);
+		}
+	}
 }
 
 static struct bt_le_ext_adv_cb adv_cb = {
 	.request = request,
 	.response = response,
+};
+
+void connected(struct bt_conn *c, uint8_t err)
+{
+	printk("Connected (err 0x%02X)\n", err);
+
+	if (err) {
+		conn = NULL;
+	}
+}
+
+void disconnected(struct bt_conn *conn, uint8_t reason)
+{
+	printk("Disconnected (reason 0x%02X)\n", reason);
+}
+
+BT_CONN_CB_DEFINE(conn_cb) = {
+	.connected = connected,
+	.disconnected = disconnected,
 };
 
 void main(void)

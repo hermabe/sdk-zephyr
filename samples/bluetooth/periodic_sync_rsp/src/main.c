@@ -8,6 +8,8 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/controller.h>
+#include <zephyr/bluetooth/conn.h>
 #include <zephyr/sys/util.h>
 
 #define TIMEOUT_SYNC_CREATE K_SECONDS(10)
@@ -91,15 +93,15 @@ static void sync_cb(struct bt_le_per_adv_sync *sync, struct bt_le_per_adv_sync_s
 	printk("Synced to %s\n", le_addr);
 
 	params.properties = 0;
-	// params.num_subevents = MIN(ARRAY_SIZE(subevents), info->num_subevents);
-	params.num_subevents = 1;
+	params.num_subevents = MIN(ARRAY_SIZE(subevents), info->num_subevents);
+	// params.num_subevents = 1;
 	params.subevents = subevents;
-	subevents[0] = 2;
+	// subevents[0] = 2;
 
-	// /* Listen to all subevents */
-	// for (size_t i = 0; i < params.num_subevents; i++) {
-	// 	params.subevents[i] = i;
-	// }
+	/* Listen to all subevents */
+	for (size_t i = 0; i < params.num_subevents; i++) {
+		params.subevents[i] = i;
+	}
 
 	err = bt_le_per_adv_sync_subevent(sync, &params);
 	if (err) {
@@ -177,6 +179,29 @@ static struct bt_le_per_adv_sync_cb sync_callbacks = {
 	.recv = recv_cb,
 };
 
+static struct bt_conn *conn;
+
+void connected(struct bt_conn *c, uint8_t err)
+{
+	printk("Connected (err 0x%02X)\n", err);
+
+	if (err) {
+		conn = NULL;
+	} else {
+		conn = c;
+	}
+}
+
+void disconnected(struct bt_conn *conn, uint8_t reason)
+{
+	printk("Disconnected (reason 0x%02X)\n", reason);
+}
+
+BT_CONN_CB_DEFINE(conn_cb) = {
+	.connected = connected,
+	.disconnected = disconnected,
+};
+
 void main(void)
 {
 	struct bt_le_per_adv_sync_param sync_create_param;
@@ -203,6 +228,9 @@ void main(void)
 
 	k_work_init_delayable(&blink_work, blink_timeout);
 #endif /* HAS_LED */
+
+	static const uint8_t addr[6] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
+	bt_ctlr_set_public_addr(addr);
 
 	/* Initialize the Bluetooth Subsystem */
 	err = bt_enable(NULL);
