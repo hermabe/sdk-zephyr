@@ -1052,8 +1052,9 @@ void bt_conn_set_state(struct bt_conn *conn, bt_conn_state_t state)
 		 * Timer is needed only for LE. For other link types controller
 		 * will handle connection timeout.
 		 */
-		if (false && IS_ENABLED(CONFIG_BT_CENTRAL) &&
-		    conn->type == BT_CONN_TYPE_LE) {
+		if (IS_ENABLED(CONFIG_BT_CENTRAL) &&
+		    conn->type == BT_CONN_TYPE_LE &&
+		    bt_dev.create_param.timeout != 0) {
 			k_work_schedule(&conn->deferred_work,
 					K_MSEC(10 * bt_dev.create_param.timeout));
 		}
@@ -2848,6 +2849,12 @@ int bt_conn_le_create_synced(const struct bt_le_ext_adv *adv,
 		return -ENOMEM;
 	}
 
+	/* The connection creation timeout is not really useful for PAwR.
+	 * The controller will give a result for the connection attempt
+	 * within a periodic interval. We do not know the periodic interval
+	 * used, so disable the timeout.
+	 */
+	bt_dev.create_param.timeout = 0;
 	bt_conn_set_state(conn, BT_CONN_CONNECTING);
 
 	err = bt_le_create_conn_synced(conn, adv, synced_param->subevent);
