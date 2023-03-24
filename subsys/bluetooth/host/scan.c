@@ -1090,9 +1090,24 @@ int bt_le_per_adv_set_response_data(struct bt_le_per_adv_sync *per_adv_sync,
 	struct bt_hci_cp_le_set_pawr_response_data *cp;
 	struct net_buf *buf;
 
-	/* TODO: Parameter sanity checks */
+	if (per_adv_sync->num_subevents == 0) {
+		return -EINVAL;
+	}
 
-	buf = bt_hci_cmd_create(BT_HCI_OP_LE_SET_PER_ADV_RESPONSE_DATA, sizeof(*cp) + data->len);
+	if (param->request_subevent >= per_adv_sync->num_subevents) {
+		return -EINVAL;
+	}
+
+	if (param->response_subevent >= per_adv_sync->num_subevents) {
+		return -EINVAL;
+	}
+
+	if (data->len > 247) {
+		return -EINVAL;
+	}
+
+	buf = bt_hci_cmd_create(BT_HCI_OP_LE_SET_PER_ADV_RESPONSE_DATA,
+				sizeof(*cp) + data->len);
 
 	if (!buf) {
 		return -ENOBUFS;
