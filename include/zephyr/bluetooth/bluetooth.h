@@ -74,16 +74,35 @@ struct bt_le_ext_adv_scanned_info {
 };
 
 struct bt_le_per_adv_data_request {
+	/** The first subevent data can be set for */
 	uint8_t start;
+
+	/** The number of subevents data can be set for */
 	uint8_t count;
 };
 
 struct bt_le_per_adv_response_info {
+	/** The subevent the response was received in */
 	uint8_t subevent;
+
+	/** @brief Status of the subevent indication.
+	 *
+	 * 0 if subevent indication was transmitted.
+	 * 1 if subevent indication was not transmitted.
+	 * All other values RFU.
+	 */
 	uint8_t tx_status;
+
+	/** The TX power of the response in dBm */
 	int8_t tx_power;
+
+	/** The RSSI of the response in dBm */
 	int8_t rssi;
+
+	/** The Constant Tone Extension (CTE) of the advertisement (@ref bt_df_cte_type) */
 	uint8_t cte_type;
+
+	/** The slot the response was received in */
 	uint8_t response_slot;
 };
 
@@ -732,41 +751,36 @@ struct bt_le_per_adv_param {
 	/**
 	 * @brief Number of subevents
 	 *
-	 * If zero, subevent_interval, response_slot_delay, response_slot_spacing,
-	 * and num_response_slots parameter shall be ignored.
+	 * If zero, the periodic advertiser will be a broadcaster, without responses.
 	 */
 	uint8_t num_subevents;
 
 	/**
 	 * @brief Interval between subevents (N * 1.25 ms)
 	 *
-	 * Shall be between 7.5ms to 318.75ms
+	 * Shall be between 7.5ms and 318.75 ms.
 	 */
 	uint8_t subevent_interval;
 
 	/**
-	 * @brief Time between the advertising packet in a subevent and the first response slot
-	 * 	  (N * 1.25ms)
+	 * @brief Time between the advertising packet in a subevent and the
+	 * first response slot (N * 1.25ms)
 	 *
-	 * Zero means no reponse slots,
-	 * otherwise shall be between 7.5ms to 317.5ms
 	 */
 	uint8_t response_slot_delay;
 
 	/**
 	 * @brief Time between response slots (N * 0.125 ms)
 	 *
-	 * Zero means no response slots,
-	 * otherwise shall be between 0.25ms to 31.875ms
+	 * Shall be between 0.25 and 31.875 ms.
 	 */
 	uint8_t response_slot_spacing;
 
 	/**
 	 * @brief Number of subevent response slots
 	 *
-	 * Zero means no response slots,
-	 * otherwise shall be between 0x01 to 0xFF
-	*/
+	 * If zero, response_slot_delay and response_slot_spacing are ignored.
+	 */
 	uint8_t num_response_slots;
 #endif /* CONFIG_BT_PER_ADV_RSP */
 };
@@ -1237,11 +1251,17 @@ int bt_le_per_adv_set_data(const struct bt_le_ext_adv *adv,
 			   const struct bt_data *ad, size_t ad_len);
 
 struct bt_le_per_adv_subevent_data_params {
+	/** The subevent to set data for */
 	uint8_t subevent;
+
+	/** The first response slot to listen to */
 	uint8_t response_slot_start;
+
+	/** The number of response slots to listen to */
 	uint8_t response_slot_count;
+
+	/* TODO: Use struct bt_data  or struct net_buf_simple */
 	uint8_t subevent_data_length;
-	/* TODO: Use struct bt_data */
 	const uint8_t *data;
 };
 
@@ -1367,10 +1387,11 @@ struct bt_le_per_adv_sync_recv_info {
 	/** The Constant Tone Extension (CTE) of the advertisement (@ref bt_df_cte_type) */
 	uint8_t cte_type;
 #if defined(CONFIG_BT_PER_ADV_SYNC_RSP)
-	/** The value of paEventCounter for the reported periodic advertising packet. */
+	/** The value of event counter where the subevent indication was received. */
 	uint16_t periodic_event_counter;
-	/** The subevent number. */
-	uint8_t  subevent;
+
+	/** The subevent where the subevend indicartion was received. */
+	uint8_t subevent;
 #endif /* CONFIG_BT_PER_ADV_SYNC_RSP */
 };
 
@@ -2468,13 +2489,21 @@ int bt_configure_data_path(uint8_t dir, uint8_t id, uint8_t vs_config_len,
 			   const uint8_t *vs_config);
 
 struct bt_le_per_adv_sync_subevent_params {
-	/** Periodic_Advertising_Properties */
+	/** @brief Periodic Advertising Properties.
+	 *
+	 * Bit 6 is include TxPower, all others RFU.
+	 *
+	 */
 	uint16_t properties;
 
-	/** Number of subevents to sync */
+	/** Number of subevents to sync to */
 	uint8_t num_subevents;
 
-	/** The subevent(s) to synchronize with */
+	/** @brief The subevent(s) to synchronize with
+	 *
+	 * The array must have @ref num_subevents elements.
+	 *
+	 */
 	uint8_t *subevents;
 };
 
@@ -2486,7 +2515,6 @@ struct bt_le_per_adv_sync_subevent_params {
  *  device and pass any received data up to the Host
  *
  *  @param per_adv_sync   The periodic advertising sync object.
- *
  *  @param params         Properties, Num_subevents, subevent.
  *
  *  @return 0 in case of success or negative value in case of error.
@@ -2495,9 +2523,27 @@ int bt_le_per_adv_sync_subevent(struct bt_le_per_adv_sync *per_adv_sync,
 				struct bt_le_per_adv_sync_subevent_params *params);
 
 struct bt_le_per_adv_response_params {
+	/** @brief The periodic event counter of the request the response is sent to.
+	 *
+	 * @ref bt_le_per_adv_sync_recv_info
+	 *
+	 * @note The response can be sent up to one periodic interval after
+	 * the request was received.
+	 *
+	 */
 	uint16_t request_event;
+
+	/** @brief The subevent counter of the request the response is sent to.
+	 *
+	 * @ref bt_le_per_adv_sync_recv_info
+	 *
+	 */
 	uint8_t request_subevent;
+
+	/** The subevent the response shall be sent in */
 	uint8_t response_subevent;
+
+	/** Teh response slot the response shall be sent in */
 	uint8_t response_slot;
 };
 
