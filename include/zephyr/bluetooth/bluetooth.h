@@ -1260,9 +1260,8 @@ struct bt_le_per_adv_subevent_data_params {
 	/** The number of response slots to listen to */
 	uint8_t response_slot_count;
 
-	/* TODO: Use struct bt_data  or struct net_buf_simple */
-	uint8_t subevent_data_length;
-	const uint8_t *data;
+	/* TODO: Use struct bt_data? */
+	const struct net_buf_simple *data;
 };
 
 /**

@@ -68,7 +68,7 @@ static void scan_recv(const struct bt_le_scan_recv_info *info, struct net_buf_si
 
 	bt_data_parse(buf, data_cb, name);
 
-	if (!per_adv_found && info->interval) {
+	if (!per_adv_found && info->interval && !strcmp(name, "Zephyr PAwR")) {
 		per_adv_found = true;
 
 		per_sid = info->sid;
@@ -90,7 +90,7 @@ static void sync_cb(struct bt_le_per_adv_sync *sync, struct bt_le_per_adv_sync_s
 	int err;
 
 	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
-	printk("Synced to %s\n", le_addr);
+	printk("Synced to %s with %d subevents\n", le_addr, info->num_subevents);
 
 	params.properties = 0;
 	params.num_subevents = MIN(ARRAY_SIZE(subevents), info->num_subevents);

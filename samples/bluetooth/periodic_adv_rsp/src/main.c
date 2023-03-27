@@ -7,25 +7,27 @@
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
 
-static uint8_t mfg_data[5][5];
 
 #define NUM_RSP_SLOTS 5
-
+#define NUM_SUBEVENTS 5
+#define PACKET_SIZE 5
 static const struct bt_le_per_adv_param per_adv_params = {
 	.interval_min = 0xFF,
 	.interval_max = 0xFF,
 	.options = 0,
-	.num_subevents = 5,
+	.num_subevents = NUM_SUBEVENTS,
 	.subevent_interval = 0x30,
 	.response_slot_delay = 0x5,
 	.response_slot_spacing = 0x50,
 	.num_response_slots = NUM_RSP_SLOTS,
 };
 
-static struct bt_le_per_adv_subevent_data_params subevent_data_params[5];
+static struct bt_le_per_adv_subevent_data_params subevent_data_params[NUM_SUBEVENTS];
+static struct net_buf_simple bufs[NUM_SUBEVENTS];
+static uint8_t backing_store[PACKET_SIZE][NUM_SUBEVENTS];
 
-// BUILD_ASSERT(ARRAY_SIZE(ad) == ARRAY_SIZE(subevent_data_params));
-BUILD_ASSERT(ARRAY_SIZE(mfg_data) == ARRAY_SIZE(subevent_data_params));
+BUILD_ASSERT(ARRAY_SIZE(bufs) == ARRAY_SIZE(subevent_data_params));
+BUILD_ASSERT(ARRAY_SIZE(backing_store) == ARRAY_SIZE(subevent_data_params));
 
 static uint8_t counter;
 
@@ -41,14 +43,14 @@ static void request(struct bt_le_ext_adv *adv, const struct bt_le_per_adv_data_r
 	// printk("Setting data for subevents: [");
 
 	for (size_t i = 0; i < to_send; i++) {
-		mfg_data[i][ARRAY_SIZE(mfg_data[i]) - 1] = counter++;
+		struct net_buf_simple *buf = &bufs[i];
+		buf->data[buf->len - 1] = counter++;
 
 		subevent_data_params[i].subevent =
 			(request->start + i) % per_adv_params.num_subevents;
 		subevent_data_params[i].response_slot_start = 0;
-		subevent_data_params[i].response_slot_count = 5;
-		subevent_data_params[i].subevent_data_length = ARRAY_SIZE(mfg_data[0]);
-		subevent_data_params[i].data = mfg_data[i];
+		subevent_data_params[i].response_slot_count = NUM_RSP_SLOTS;
+		subevent_data_params[i].data = buf;
 
 		// printk("%d, ", subevent_data_params[i].subevent);
 	}
@@ -133,18 +135,24 @@ BT_CONN_CB_DEFINE(conn_cb) = {
 	.disconnected = disconnected,
 };
 
+void init_bufs(void)
+{
+	for (size_t i = 0; i < ARRAY_SIZE(backing_store); i++) {
+		backing_store[i][0] = ARRAY_SIZE(backing_store[i]) - 1;
+		backing_store[i][1] = BT_DATA_MANUFACTURER_DATA;
+		backing_store[i][2] = 0x59; /* Nordic */
+		backing_store[i][3] = 0x00;
+
+		net_buf_simple_init_with_data(&bufs[i], &backing_store[i], ARRAY_SIZE(backing_store[i]));
+	}
+}
+
 void main(void)
 {
 	struct bt_le_ext_adv *adv;
 	int err;
 
-	for (size_t i = 0; i < ARRAY_SIZE(mfg_data); i++) {
-		mfg_data[i][0] = ARRAY_SIZE(mfg_data[0]) - 1;
-		mfg_data[i][1] = BT_DATA_MANUFACTURER_DATA;
-		mfg_data[i][2] = 0x59; /* Nordic */
-		mfg_data[i][3] = 0x00;
-		mfg_data[i][4] = 0x00;
-	}
+	init_bufs();
 
 	printk("Starting Periodic Advertising Demo\n");
 

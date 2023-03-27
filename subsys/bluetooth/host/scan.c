@@ -1026,6 +1026,11 @@ static void bt_hci_le_per_adv_sync_established_common(struct net_buf *buf)
 	sync_info.subevent_interval = evt->subevent_interval;
 	sync_info.response_slot_delay = evt->response_slot_delay;
 	sync_info.response_slot_spacing = evt->response_slot_spacing;
+
+	pending_per_adv_sync->num_subevents = evt->num_subevents;
+	pending_per_adv_sync->subevent_interval = evt->subevent_interval;
+	pending_per_adv_sync->response_slot_delay = evt->response_slot_delay;
+	pending_per_adv_sync->response_slot_spacing = evt->response_slot_spacing;
 #endif /* CONFIG_BT_PER_ADV_SYNC_RSP */
 
 	sync_info.recv_enabled =

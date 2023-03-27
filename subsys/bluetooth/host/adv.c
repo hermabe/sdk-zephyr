@@ -1868,7 +1868,7 @@ int bt_le_per_adv_set_subevent_data(const struct bt_le_ext_adv *adv, uint8_t num
 	for (size_t i = 0; i < num_subevents; i++)
 	{
 		cmd_length += sizeof(struct bt_hci_cp_le_set_pawr_subevent_data_array);
-		cmd_length += params[i].subevent_data_length;
+		cmd_length += params[i].data->len;
 	}
 
 	buf = bt_hci_cmd_create(BT_HCI_OP_LE_SET_PER_ADV_SUBEVENT_DATA, cmd_length);
@@ -1886,8 +1886,8 @@ int bt_le_per_adv_set_subevent_data(const struct bt_le_ext_adv *adv, uint8_t num
 		element->subevent = params[i].subevent;
 		element->response_slot_start = params[i].response_slot_start;
 		element->response_slot_count = params[i].response_slot_count;
-		element->subevent_data_length = params[i].subevent_data_length;
-		net_buf_add_mem(buf, params[i].data, params[i].subevent_data_length);
+		element->subevent_data_length = params[i].data->len;
+		net_buf_add_mem(buf, params[i].data->data, params[i].data->len);
 	}
 
 	return bt_hci_cmd_send_sync(BT_HCI_OP_LE_SET_PER_ADV_SUBEVENT_DATA, buf, NULL);
