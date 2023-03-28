@@ -164,21 +164,24 @@ struct bt_le_ext_adv_cb {
 
 #if defined(CONFIG_BT_PER_ADV_RSP)
 	/**
-	 * @brief The Controller indicates it is ready to transmit one or more subvenvt.
+	 * @brief The Controller indicates it is ready to transmit one or more subevent.
 	 *
-	 * This callback notifies the application that data request from controller.
+	 * This callback notifies the application that the controller has requested
+	 * data for upcoming subevents.
 	 *
-	 * @param adv  The advertising set object.
-	 * @param request Information about the sent event.
+	 * @param adv     The advertising set object.
+	 * @param request Information about the upcoming subevents.
 	 */
 	void (*request)(struct bt_le_ext_adv *adv,
 			const struct bt_le_per_adv_data_request *request);
 	/**
-	 * @brief The Controller indicates that one or more BT device have responded to a
-	 * a periodic advertising subevent.
+	 * @brief The Controller indicates that one or more synced devices have
+	 * responded to a periodic advertising subevent indication.
 	 *
-	 * @param adv		The advertising set object.
-	 * @param responses	Information about the responses received.
+	 * @param adv  The advertising set object.
+	 * @param info Information about the responses received.
+	 * @param buf  The received data. NULL if the controller reported
+	 *             that it did not receive any response.
 	 */
 	void (*response)(struct bt_le_ext_adv *adv, struct bt_le_per_adv_response_info *info,
 			 struct net_buf_simple *buf);
@@ -764,7 +767,7 @@ struct bt_le_per_adv_param {
 
 	/**
 	 * @brief Time between the advertising packet in a subevent and the
-	 * first response slot (N * 1.25ms)
+	 * first response slot (N * 1.25 ms)
 	 *
 	 */
 	uint8_t response_slot_delay;
@@ -1260,23 +1263,24 @@ struct bt_le_per_adv_subevent_data_params {
 	/** The number of response slots to listen to */
 	uint8_t response_slot_count;
 
-	/* TODO: Use struct bt_data? */
+	/** The data to send */
 	const struct net_buf_simple *data;
 };
 
 /**
  * @brief Set the periodic advertising with response subevent data.
  *
- * This function is called by the Host to set the data for one or more subevents of PAwR in reply
- * to an HCI_LE_Periodic_Advertising_Subevent_Data_Request event. The data for a subevent shall be
- * transmitted only once.
+ * Set the data for one or more subevents of a Periodic Advertising with
+ * Responses Advertiser in reply data request.
  *
- * @pre There are @p num_subevents elements in @p params
+ * @pre There are @p num_subevents elements in @p params.
+ * @pre The controller has requested data for the subevents in @p params.
  *
- * @param adv       The extended advertiser the PAwR train belongs to.
- * @param params    Subevent params.
+ * @param adv           The extended advertiser the PAwR train belongs to.
+ * @param num_subevents The number of subevents to set data for.
+ * @param params        Subevent parameters.
  *
- * @return          Zero on success or (negative) error code otherwise.
+ * @return Zero on success or (negative) error code otherwise.
  */
 int bt_le_per_adv_set_subevent_data(const struct bt_le_ext_adv *adv, uint8_t num_subevents,
 				    const struct bt_le_per_adv_subevent_data_params *params);
@@ -1347,13 +1351,13 @@ struct bt_le_per_adv_sync_synced_info {
 	/** Number of subevents */
 	uint8_t num_subevents;
 
-	/** Subevent interval (N * 1.25ms) */
+	/** Subevent interval (N * 1.25 ms) */
 	uint8_t subevent_interval;
 
-	/** Response slot delay (N * 1.25ms) */
+	/** Response slot delay (N * 1.25 ms) */
 	uint8_t response_slot_delay;
 
-	/** Reponse slot spacing (N * 1.25ms) */
+	/** Reponse slot spacing (N * 1.25 ms) */
 	uint8_t response_slot_spacing;
 
 #endif /* CONFIG_BT_PER_ADV_SYNC_RSP */
@@ -2508,13 +2512,11 @@ struct bt_le_per_adv_sync_subevent_params {
 
 /** @brief Synchronize with a subset of subevents
  *
- *  The HCI_LE_Set_Periodic_Sync_Subevent command is used to instruct the
- *  Controller to synchronize with a subset of the subevents within a PAwR train
- *  identified by the Sync_Handle parameter, listen for packets sent by the peer
- *  device and pass any received data up to the Host
+ *  Until this command is issued, the subevent(s) the controller is synchronized
+ *  to is unspecified.
  *
  *  @param per_adv_sync   The periodic advertising sync object.
- *  @param params         Properties, Num_subevents, subevent.
+ *  @param params         Parameters.
  *
  *  @return 0 in case of success or negative value in case of error.
  */
@@ -2552,13 +2554,12 @@ struct bt_le_per_adv_response_params {
  * This function is called by the Host to set the response dat.
  * The data for a repsonse slot shall be transmitted only once.
  *
- * @param per_adv_sync   The periodic advertising sync object.
- * @param params         param.
- * @param data           Advertising data.
+ * @param per_adv_sync The periodic advertising sync object.
+ * @param params       Parameters.
+ * @param data         The response data to send.
  *
- * @return          Zero on success or (negative) error code otherwise.
+ * @return Zero on success or (negative) error code otherwise.
  */
-/* TODO: Use struct bt_data */
 int bt_le_per_adv_set_response_data(struct bt_le_per_adv_sync *per_adv_sync,
 				    const struct bt_le_per_adv_response_params *params,
 				    const struct net_buf_simple *data);
