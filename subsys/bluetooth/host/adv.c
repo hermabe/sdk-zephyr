@@ -1857,9 +1857,9 @@ int bt_le_per_adv_set_subevent_data(const struct bt_le_ext_adv *adv, uint8_t num
 				    const struct bt_le_per_adv_subevent_data_params *params)
 {
 	struct bt_hci_cp_le_set_pawr_subevent_data *cp;
-	struct bt_hci_cp_le_set_pawr_subevent_data_array *element;
+	struct bt_hci_cp_le_set_pawr_subevent_data_element *element;
 	struct net_buf *buf;
-	uint8_t cmd_length = sizeof(*cp);
+	size_t cmd_length = sizeof(*cp);
 
 	if (!BT_FEAT_LE_PAWR_ADVERTISER(bt_dev.le.features)) {
 		return -ENOTSUP;
@@ -1867,11 +1867,15 @@ int bt_le_per_adv_set_subevent_data(const struct bt_le_ext_adv *adv, uint8_t num
 
 	for (size_t i = 0; i < num_subevents; i++)
 	{
-		cmd_length += sizeof(struct bt_hci_cp_le_set_pawr_subevent_data_array);
+		cmd_length += sizeof(struct bt_hci_cp_le_set_pawr_subevent_data_element);
 		cmd_length += params[i].data->len;
 	}
 
-	buf = bt_hci_cmd_create(BT_HCI_OP_LE_SET_PER_ADV_SUBEVENT_DATA, cmd_length);
+	if (cmd_length > 0xFF) {
+		return -EINVAL;
+	}
+
+	buf = bt_hci_cmd_create(BT_HCI_OP_LE_SET_PER_ADV_SUBEVENT_DATA, (uint8_t)cmd_length);
 	if (!buf) {
 		return -ENOBUFS;
 	}

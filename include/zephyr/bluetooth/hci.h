@@ -1509,19 +1509,20 @@ struct bt_hci_cp_le_ext_create_conn_v2 {
 } __packed;
 
 #define BT_HCI_OP_LE_SET_PER_ADV_SUBEVENT_DATA  BT_OP(BT_OGF_LE, 0x0082)
-struct bt_hci_cp_le_set_pawr_subevent_data {
-	uint8_t adv_handle;
-	uint8_t num_subevents;
-	uint8_t array_params[0];
-} __packed;
-
-struct bt_hci_cp_le_set_pawr_subevent_data_array {
+struct bt_hci_cp_le_set_pawr_subevent_data_element {
 	uint8_t subevent;
 	uint8_t response_slot_start;
 	uint8_t response_slot_count;
 	uint8_t subevent_data_length;
 	uint8_t subevent_data[0];
 } __packed;
+
+struct bt_hci_cp_le_set_pawr_subevent_data {
+	uint8_t adv_handle;
+	uint8_t num_subevents;
+	struct bt_hci_cp_le_set_pawr_subevent_data_element subevents[0];
+} __packed;
+
 
 #define BT_HCI_OP_LE_SET_PER_ADV_RESPONSE_DATA  BT_OP(BT_OGF_LE, 0x0083)
 struct bt_hci_cp_le_set_pawr_response_data {
