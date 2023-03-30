@@ -1277,11 +1277,18 @@ void bt_hci_le_enh_conn_complete(struct bt_hci_evt_le_enh_conn_complete *evt)
 		}
 
 		if (IS_ENABLED(CONFIG_BT_CENTRAL) &&
-		    (evt->status == BT_HCI_ERR_UNKNOWN_CONN_ID ||
-		    (IS_ENABLED(CONFIG_BT_PER_ADV_RSP) &&
-		     evt->status == BT_HCI_ERR_CONN_FAIL_TO_ESTAB))) {
+		    (evt->status == BT_HCI_ERR_UNKNOWN_CONN_ID)) {
 			le_conn_complete_cancel();
 			bt_le_scan_update(false);
+			return;
+		}
+
+		if (IS_ENABLED(CONFIG_BT_CENTRAL) && IS_ENABLED(CONFIG_BT_PER_ADV_RSP) &&
+		    evt->status == BT_HCI_ERR_CONN_FAIL_TO_ESTAB) {
+			le_conn_complete_cancel();
+
+			atomic_clear_bit(bt_dev.flags, BT_DEV_INITIATING);
+
 			return;
 		}
 
