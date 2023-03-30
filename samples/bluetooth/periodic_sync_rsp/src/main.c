@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020 Nordic Semiconductor ASA
+ * Copyright (c) 2023 Nordic Semiconductor ASA
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -10,6 +10,8 @@
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/controller.h>
 #include <zephyr/bluetooth/conn.h>
+#include <zephyr/bluetooth/gatt.h>
+#include <zephyr/bluetooth/uuid.h>
 #include <zephyr/sys/util.h>
 
 #define TIMEOUT_SYNC_CREATE K_SECONDS(10)
@@ -22,26 +24,6 @@ static uint8_t per_sid;
 static K_SEM_DEFINE(sem_per_adv, 0, 1);
 static K_SEM_DEFINE(sem_per_sync, 0, 1);
 static K_SEM_DEFINE(sem_per_sync_lost, 0, 1);
-
-/* The devicetree node identifier for the "led0" alias. */
-#define LED0_NODE DT_ALIAS(led0)
-
-#if DT_NODE_HAS_STATUS(LED0_NODE, okay)
-#define HAS_LED 1
-static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
-#define BLINK_ONOFF K_MSEC(500)
-
-static struct k_work_delayable blink_work;
-static bool led_is_on;
-
-static void blink_timeout(struct k_work *work)
-{
-	led_is_on = !led_is_on;
-	gpio_pin_set(led.port, led.pin, (int)led_is_on);
-
-	k_work_schedule(&blink_work, BLINK_ONOFF);
-}
-#endif
 
 static bool data_cb(struct bt_data *data, void *user_data)
 {
@@ -82,6 +64,14 @@ static struct bt_le_scan_cb scan_callbacks = {
 	.recv = scan_recv,
 };
 
+static struct bt_conn *default_conn;
+static struct bt_le_per_adv_sync *default_sync;
+static struct __packed {
+	uint8_t subevent;
+	uint8_t response_slot;
+
+} pawr_timing;
+
 static void sync_cb(struct bt_le_per_adv_sync *sync, struct bt_le_per_adv_sync_synced_info *info)
 {
 	struct bt_le_per_adv_sync_subevent_params params;
@@ -92,16 +82,18 @@ static void sync_cb(struct bt_le_per_adv_sync *sync, struct bt_le_per_adv_sync_s
 	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
 	printk("Synced to %s with %d subevents\n", le_addr, info->num_subevents);
 
-	params.properties = 0;
-	params.num_subevents = MIN(ARRAY_SIZE(subevents), info->num_subevents);
-	// params.num_subevents = 1;
-	params.subevents = subevents;
-	// subevents[0] = 2;
+	default_sync = sync;
 
-	/* Listen to all subevents */
-	for (size_t i = 0; i < params.num_subevents; i++) {
-		params.subevents[i] = i;
-	}
+	params.properties = 0;
+	// params.num_subevents = MIN(ARRAY_SIZE(subevents), info->num_subevents);
+	params.num_subevents = 1;
+	params.subevents = subevents;
+	subevents[0] = pawr_timing.subevent;
+
+	// /* Listen to all subevents */
+	// for (size_t i = 0; i < params.num_subevents; i++) {
+	// 	params.subevents[i] = i;
+	// }
 
 	err = bt_le_per_adv_sync_subevent(sync, &params);
 	if (err) {
@@ -119,6 +111,8 @@ static void term_cb(struct bt_le_per_adv_sync *sync,
 	bt_addr_le_to_str(info->addr, le_addr, sizeof(le_addr));
 
 	printk("Sync terminated (reason %d)\n", info->reason);
+
+	default_sync = NULL;
 
 	k_sem_give(&sem_per_sync_lost);
 }
@@ -160,17 +154,17 @@ static void recv_cb(struct bt_le_per_adv_sync *sync,
 	// rsp_params.response_subevent = (info->subevent + 4) % 5;
 	/* Respond in current subevent. */
 	rsp_params.response_subevent = info->subevent;
-	rsp_params.response_slot = 0;
+	rsp_params.response_slot = pawr_timing.response_slot;
 
-	printk("Indication: subevent %d\n", info->subevent);
-	bt_data_parse(buf, print_ad_field, NULL);
+	// printk("Indication: subevent %d\n", info->subevent);
+	// bt_data_parse(buf, print_ad_field, NULL);
 
 	err = bt_le_per_adv_set_response_data(sync, &rsp_params, &rsp_buf);
 	if (err) {
 		printk("Failed to send response (err %d)\n", err);
 	}
 
-	printk("Response sent\n");
+	// printk("Response sent\n");
 }
 
 static struct bt_le_per_adv_sync_cb sync_callbacks = {
@@ -179,21 +173,83 @@ static struct bt_le_per_adv_sync_cb sync_callbacks = {
 	.recv = recv_cb,
 };
 
-static struct bt_conn *conn;
+static struct bt_uuid_128 pawr_svc_uuid =
+	BT_UUID_INIT_128(BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef0));
+static struct bt_uuid_128 pawr_char_uuid =
+	BT_UUID_INIT_128(BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef1));
 
-void connected(struct bt_conn *c, uint8_t err)
+static ssize_t write_timing(struct bt_conn *conn, const struct bt_gatt_attr *attr, const void *buf,
+			    uint16_t len, uint16_t offset, uint8_t flags)
 {
+	if (offset) {
+		return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+	}
+
+	if (len != sizeof(pawr_timing)) {
+		return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+	}
+
+	memcpy(&pawr_timing, buf, len);
+
+	printk("New timing: subevent %d, response slot %d\n", pawr_timing.subevent,
+	       pawr_timing.response_slot);
+
+	struct bt_le_per_adv_sync_subevent_params params;
+	uint8_t subevents[1];
+	int err;
+
+	params.properties = 0;
+	params.num_subevents = 1;
+	params.subevents = subevents;
+	subevents[0] = pawr_timing.subevent;
+
+	if (default_sync) {
+		err = bt_le_per_adv_sync_subevent(default_sync, &params);
+		if (err) {
+			printk("Failed to set subevents to sync to (err %d)\n", err);
+		}
+	} else {
+		printk("Not synced yet\n");
+	}
+
+	return len;
+}
+
+BT_GATT_SERVICE_DEFINE(pawr_svc, BT_GATT_PRIMARY_SERVICE(&pawr_svc_uuid.uuid),
+		       BT_GATT_CHARACTERISTIC(&pawr_char_uuid.uuid, BT_GATT_CHRC_WRITE,
+					      BT_GATT_PERM_WRITE, NULL, write_timing,
+					      &pawr_timing));
+
+void connected(struct bt_conn *conn, uint8_t err)
+{
+	// struct bt_le_per_adv_sync_transfer_param past_param;
+
 	printk("Connected (err 0x%02X)\n", err);
 
 	if (err) {
-		conn = NULL;
-	} else {
-		conn = c;
+		// bt_conn_unref(conn);
+		default_conn = NULL;
+
+		return;
 	}
+
+	default_conn = bt_conn_ref(conn);
+
+	// past_param.skip = 1;
+	// past_param.timeout = 1000; /* 10 seconds */
+	// err = bt_le_per_adv_sync_transfer_subscribe(conn, &past_param);
+	// if (err) {
+	// 	printk("PAST subscribe failed (err %d)\n", err);
+	// }
 }
 
 void disconnected(struct bt_conn *conn, uint8_t reason)
 {
+	if (conn != default_conn) {
+		return;
+	}
+
+	bt_conn_unref(default_conn);
 	printk("Disconnected (reason 0x%02X)\n", reason);
 }
 
@@ -204,119 +260,59 @@ BT_CONN_CB_DEFINE(conn_cb) = {
 
 void main(void)
 {
-	struct bt_le_per_adv_sync_param sync_create_param;
-	struct bt_le_per_adv_sync *sync;
+	struct bt_le_per_adv_sync_transfer_param past_param;
 	int err;
 
-	printk("Starting Periodic Advertising Synchronization Demo\n");
+	printk("Starting Periodic Advertising with Responses Synchronization Demo\n");
 
-#if defined(HAS_LED)
-	printk("Checking LED device...");
-	if (!device_is_ready(led.port)) {
-		printk("failed.\n");
-		return;
-	}
-	printk("done.\n");
-
-	printk("Configuring GPIO pin...");
-	err = gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
-	if (err) {
-		printk("failed.\n");
-		return;
-	}
-	printk("done.\n");
-
-	k_work_init_delayable(&blink_work, blink_timeout);
-#endif /* HAS_LED */
-
-	static const uint8_t addr[6] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
-	bt_ctlr_set_public_addr(addr);
-
-	/* Initialize the Bluetooth Subsystem */
 	err = bt_enable(NULL);
 	if (err) {
 		printk("Bluetooth init failed (err %d)\n", err);
+
 		return;
 	}
 
-	printk("Scan callbacks register...");
-	bt_le_scan_cb_register(&scan_callbacks);
-	printk("success.\n");
-
-	printk("Periodic Advertising callbacks register...");
 	bt_le_per_adv_sync_cb_register(&sync_callbacks);
-	printk("Success.\n");
 
-	printk("Start scanning...");
-	err = bt_le_scan_start(BT_LE_SCAN_ACTIVE, NULL);
+	past_param.skip = 1;
+	past_param.timeout = 1000; /* 10 seconds */
+	past_param.options = BT_LE_PER_ADV_SYNC_TRANSFER_OPT_NONE;
+	err = bt_le_per_adv_sync_transfer_subscribe(NULL, &past_param);
 	if (err) {
-		printk("failed (err %d)\n", err);
-		return;
+		printk("PAST subscribe failed (err %d)\n", err);
 	}
-	printk("success.\n");
 
 	do {
-#if defined(HAS_LED)
-		struct k_work_sync work_sync;
-
-		printk("Start blinking LED...\n");
-		led_is_on = false;
-		gpio_pin_set(led.port, led.pin, (int)led_is_on);
-		k_work_schedule(&blink_work, BLINK_ONOFF);
-#endif /* HAS_LED */
-
-		printk("Waiting for periodic advertising...\n");
-		per_adv_found = false;
-		err = k_sem_take(&sem_per_adv, K_FOREVER);
+		err = bt_le_adv_start(
+			BT_LE_ADV_PARAM(BT_LE_ADV_OPT_ONE_TIME | BT_LE_ADV_OPT_CONNECTABLE |
+						BT_LE_ADV_OPT_USE_NAME |
+						BT_LE_ADV_OPT_FORCE_NAME_IN_AD,
+					BT_GAP_ADV_FAST_INT_MIN_2, BT_GAP_ADV_FAST_INT_MAX_2, NULL),
+			NULL, 0, NULL, 0);
 		if (err) {
-			printk("failed (err %d)\n", err);
+			printk("Advertising failed to start (err %d)\n", err);
+
 			return;
 		}
-		printk("Found periodic advertising.\n");
-
-		printk("Creating Periodic Advertising Sync...");
-		bt_addr_le_copy(&sync_create_param.addr, &per_addr);
-		sync_create_param.options = 0;
-		sync_create_param.sid = per_sid;
-		sync_create_param.skip = 0;
-		sync_create_param.timeout = 0xaa;
-		err = bt_le_per_adv_sync_create(&sync_create_param, &sync);
-		if (err) {
-			printk("failed (err %d)\n", err);
-			return;
-		}
-		printk("success.\n");
 
 		printk("Waiting for periodic sync...\n");
-		err = k_sem_take(&sem_per_sync, TIMEOUT_SYNC_CREATE);
+		err = k_sem_take(&sem_per_sync, K_FOREVER);
 		if (err) {
 			printk("failed (err %d)\n", err);
 
-			printk("Deleting Periodic Advertising Sync...");
-			err = bt_le_per_adv_sync_delete(sync);
-			if (err) {
-				printk("failed (err %d)\n", err);
-				return;
-			}
-			continue;
+			return;
 		}
+
 		printk("Periodic sync established.\n");
-
-#if defined(HAS_LED)
-		printk("Stop blinking LED.\n");
-		k_work_cancel_delayable_sync(&blink_work, &work_sync);
-
-		/* Keep LED on */
-		led_is_on = true;
-		gpio_pin_set(led.port, led.pin, (int)led_is_on);
-#endif /* HAS_LED */
 
 		printk("Waiting for periodic sync lost...\n");
 		err = k_sem_take(&sem_per_sync_lost, K_FOREVER);
 		if (err) {
 			printk("failed (err %d)\n", err);
+
 			return;
 		}
+
 		printk("Periodic sync lost.\n");
 	} while (true);
 }

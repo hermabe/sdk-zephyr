@@ -4,13 +4,24 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <zephyr/bluetooth/att.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
-
+#include <zephyr/bluetooth/gatt.h>
 
 #define NUM_RSP_SLOTS 5
 #define NUM_SUBEVENTS 5
-#define PACKET_SIZE 5
+#define PACKET_SIZE   5
+#define NAME_LEN      30
+
+static K_SEM_DEFINE(sem_connected, 0, 1);
+static K_SEM_DEFINE(sem_discovered, 0, 1);
+static K_SEM_DEFINE(sem_written, 0, 1);
+static K_SEM_DEFINE(sem_disconnected, 0, 1);
+
+static struct bt_uuid_128 pawr_char_uuid =
+	BT_UUID_INIT_128(BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef1));
+static uint16_t pawr_attr_handle;
 static const struct bt_le_per_adv_param per_adv_params = {
 	.interval_min = 0xFF,
 	.interval_max = 0xFF,
@@ -36,7 +47,7 @@ static void request(struct bt_le_ext_adv *adv, const struct bt_le_per_adv_data_r
 	int err;
 	uint8_t to_send;
 
-	printk("Data request: start %d, count %d\n", request->start, request->count);
+	// printk("Data request: start %d, count %d\n", request->start, request->count);
 
 	to_send = MIN(request->count, ARRAY_SIZE(subevent_data_params));
 
@@ -84,7 +95,8 @@ static const bt_addr_le_t peer_addr = {
 	.a = {{0x11, 0x22, 0x33, 0x44, 0x55, 0x66}},
 };
 
-struct bt_conn *conn;
+static struct bt_conn *default_conn;
+static struct bt_le_ext_adv *pawr_adv;
 
 static void response(struct bt_le_ext_adv *adv, struct bt_le_per_adv_response_info *info,
 		     struct net_buf_simple *buf)
@@ -95,14 +107,14 @@ static void response(struct bt_le_ext_adv *adv, struct bt_le_per_adv_response_in
 	responses_received++;
 
 	/* Delay the connection attempt a bit */
-	if (!conn && ((responses_received % 10) == 0)) {
+	if (false && !default_conn && ((responses_received % 10) == 0)) {
 		struct bt_conn_le_create_synced_param params;
 		int err;
 
 		params.subevent = 2;
 		params.peer = &peer_addr;
 
-		err = bt_conn_le_create_synced(adv, &params, BT_LE_CONN_PARAM_DEFAULT, &conn);
+		err = bt_conn_le_create_synced(adv, &params, BT_LE_CONN_PARAM_DEFAULT, &default_conn);
 		if (err) {
 			printk("Failed to initiate connection (err %d)\n", err);
 		} else {
@@ -111,29 +123,150 @@ static void response(struct bt_le_ext_adv *adv, struct bt_le_per_adv_response_in
 	}
 }
 
-static struct bt_le_ext_adv_cb adv_cb = {
+static const struct bt_le_ext_adv_cb adv_cb = {
 	.request = request,
 	.response = response,
 };
 
-void connected(struct bt_conn *c, uint8_t err)
+void connected(struct bt_conn *conn, uint8_t err)
 {
 	printk("Connected (err 0x%02X)\n", err);
 
 	if (err) {
-		conn = NULL;
+		bt_conn_unref(conn);
+
+		return;
 	}
+
+	default_conn = conn;
+
 }
 
 void disconnected(struct bt_conn *conn, uint8_t reason)
 {
+	if (conn != default_conn) {
+		return;
+	}
+
 	printk("Disconnected (reason 0x%02X)\n", reason);
+
+	bt_conn_unref(default_conn);
+	default_conn = NULL;
+
+	k_sem_give(&sem_disconnected);
+}
+
+void remote_info_available(struct bt_conn *conn, struct bt_conn_remote_info *remote_info)
+{
+	if (conn != default_conn) {
+		return;
+	}
+
+	k_sem_give(&sem_connected);
 }
 
 BT_CONN_CB_DEFINE(conn_cb) = {
 	.connected = connected,
 	.disconnected = disconnected,
+	.remote_info_available = remote_info_available,
 };
+
+static bool data_cb(struct bt_data *data, void *user_data)
+{
+	char *name = user_data;
+	uint8_t len;
+
+	switch (data->type) {
+	case BT_DATA_NAME_SHORTENED:
+	case BT_DATA_NAME_COMPLETE:
+		len = MIN(data->data_len, NAME_LEN - 1);
+		memcpy(name, data->data, len);
+		name[len] = '\0';
+		return false;
+	default:
+		return true;
+	}
+}
+
+static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
+			 struct net_buf_simple *ad)
+{
+	char addr_str[BT_ADDR_LE_STR_LEN];
+	char name[NAME_LEN];
+	int err;
+
+	if (default_conn) {
+		return;
+	}
+
+	/* We're only interested in connectable events */
+	if (type != BT_GAP_ADV_TYPE_ADV_IND &&
+	    type != BT_GAP_ADV_TYPE_ADV_DIRECT_IND) {
+		return;
+	}
+
+	(void)memset(name, 0, sizeof(name));
+	bt_data_parse(ad, data_cb, name);
+
+	if (strlen(name)) {
+		printk("Found %s\n", name);
+	}
+
+	if (strcmp(name, "PAwR sync sample")) {
+		return;
+	}
+
+	if (bt_le_scan_stop()) {
+		return;
+	}
+
+	err = bt_conn_le_create(addr, BT_CONN_LE_CREATE_CONN,
+				BT_LE_CONN_PARAM_DEFAULT, &default_conn);
+	if (err) {
+		printk("Create conn to %s failed (%u)\n", addr_str, err);
+	}
+}
+
+static uint8_t discover_func(struct bt_conn *conn,
+			     const struct bt_gatt_attr *attr,
+			     struct bt_gatt_discover_params *params)
+{
+	struct bt_gatt_chrc *chrc;
+	char str[BT_UUID_STR_LEN];
+
+	printk("Discovery: attr %p\n", attr);
+
+	if (!attr) {
+		return BT_GATT_ITER_STOP;
+	}
+
+	chrc = (struct bt_gatt_chrc *)attr->user_data;
+
+	bt_uuid_to_str(chrc->uuid, str, sizeof(str));
+	printk("UUID %s\n", str);
+
+	if (!bt_uuid_cmp(chrc->uuid, &pawr_char_uuid.uuid)) {
+		pawr_attr_handle = chrc->value_handle;
+
+		printk("Characteristic handle: %d\n", pawr_attr_handle);
+
+		k_sem_give(&sem_discovered);
+	}
+
+	return BT_GATT_ITER_STOP;
+}
+
+static void write_func(struct bt_conn *conn, uint8_t err, struct bt_gatt_write_params *params)
+{
+	if (err) {
+		printk("Write failed (err %d)\n", err);
+
+		return;
+	}
+
+	k_sem_give(&sem_written);
+}
+
 
 void init_bufs(void)
 {
@@ -143,14 +276,24 @@ void init_bufs(void)
 		backing_store[i][2] = 0x59; /* Nordic */
 		backing_store[i][3] = 0x00;
 
-		net_buf_simple_init_with_data(&bufs[i], &backing_store[i], ARRAY_SIZE(backing_store[i]));
+		net_buf_simple_init_with_data(&bufs[i], &backing_store[i],
+					      ARRAY_SIZE(backing_store[i]));
 	}
 }
 
+#define MAX_SYNCS (NUM_SUBEVENTS * NUM_RSP_SLOTS)
+static struct __packed {
+	uint8_t subevent;
+	uint8_t response_slot;
+} pawr_timing[MAX_SYNCS];
+
+static uint8_t num_synced;
+
 void main(void)
 {
-	struct bt_le_ext_adv *adv;
 	int err;
+	struct bt_gatt_discover_params discover_params;
+	struct bt_gatt_write_params write_params;
 
 	init_bufs();
 
@@ -164,38 +307,107 @@ void main(void)
 	}
 
 	/* Create a non-connectable non-scannable advertising set */
-	err = bt_le_ext_adv_create(BT_LE_EXT_ADV_NCONN_NAME, &adv_cb, &adv);
+	err = bt_le_ext_adv_create(BT_LE_EXT_ADV_NCONN, &adv_cb, &pawr_adv);
 	if (err) {
 		printk("Failed to create advertising set (err %d)\n", err);
 		return;
 	}
 
 	/* Set periodic advertising parameters */
-	err = bt_le_per_adv_set_param(adv, &per_adv_params);
+	err = bt_le_per_adv_set_param(pawr_adv, &per_adv_params);
 	if (err) {
-		printk("Failed to set periodic advertising parameters"
-		       " (err %d)\n",
-		       err);
+		printk("Failed to set periodic advertising parameters (err %d)\n", err);
 		return;
 	}
 
 	/* Enable Periodic Advertising */
-	err = bt_le_per_adv_start(adv);
+	err = bt_le_per_adv_start(pawr_adv);
 	if (err) {
 		printk("Failed to enable periodic advertising (err %d)\n", err);
 		return;
 	}
 
-	printk("Start Extended Advertising...\n");
-	err = bt_le_ext_adv_start(adv, BT_LE_EXT_ADV_START_DEFAULT);
+	printk("Start Periodic Advertising\n");
+	err = bt_le_ext_adv_start(pawr_adv, BT_LE_EXT_ADV_START_DEFAULT);
 	if (err) {
-		printk("Failed to start extended advertising "
-		       "(err %d)\n",
-		       err);
+		printk("Failed to start extended advertising (err %d)\n", err);
 		return;
 	}
 
-	while (true) {
+	while (num_synced < MAX_SYNCS) {
+		err = bt_le_scan_start(BT_LE_SCAN_PASSIVE, device_found);
+		if (err) {
+			printk("Scanning failed to start (err %d)\n", err);
+			return;
+		}
+
+		printk("Scanning successfully started\n");
+
+		k_sem_take(&sem_connected, K_FOREVER);
+
+		err = bt_le_per_adv_set_info_transfer(pawr_adv, default_conn, 0);
+		if (err) {
+			printk("Failed to send PAST (err %d)\n", err);
+
+			goto disconnect;
+		}
+
+		printk("PAST sent\n");
+
+		discover_params.uuid = &pawr_char_uuid.uuid;
+		discover_params.func = discover_func;
+		discover_params.start_handle = BT_ATT_FIRST_ATTRIBUTE_HANDLE;
+		discover_params.end_handle = BT_ATT_LAST_ATTRIBUTE_HANDLE;
+		discover_params.type = BT_GATT_DISCOVER_CHARACTERISTIC;
+		err = bt_gatt_discover(default_conn, &discover_params);
+		if (err) {
+			printk("Discovery failed (err %d)\n", err);
+
+			goto disconnect;
+		}
+
+		printk("Discovery started\n");
+
+		k_sem_take(&sem_discovered, K_FOREVER);
+
+		/* Use slot 0 in all subevent, then slot 1 */
+		pawr_timing[num_synced].subevent = num_synced % NUM_SUBEVENTS;
+		pawr_timing[num_synced].response_slot = num_synced / NUM_RSP_SLOTS;
+
+		write_params.func = write_func;
+		write_params.handle = pawr_attr_handle;
+		write_params.offset = 0;
+		write_params.data = &pawr_timing[num_synced];
+		write_params.length = sizeof(pawr_timing[num_synced]);
+
+		err = bt_gatt_write(default_conn, &write_params);
+		if (err) {
+			printk("Write failed (err %d)\n", err);
+
+			goto disconnect;
+		}
+
+		printk("Write started\n");
+
+		k_sem_take(&sem_written, K_FOREVER);
+
+		printk("PAwR config written to sync %d, disconnecting\n", num_synced);
+		num_synced++;
+
+	disconnect:
+		err = bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+		if (err) {
+			return;
+		}
+
+		k_sem_take(&sem_disconnected, K_FOREVER);
+	}
+
+	printk("All syncs onboarded\n");
+
+	while (true)
+	{
 		k_sleep(K_SECONDS(1));
 	}
+	
 }
