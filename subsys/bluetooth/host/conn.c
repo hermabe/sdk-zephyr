@@ -165,6 +165,8 @@ static inline const char *state2str(bt_conn_state_t state)
 		return "connecting-dir-adv";
 	case BT_CONN_CONNECTING_ADV:
 		return "connecting-adv";
+	case BT_CONN_CONNECTING_SYNCED:
+		return "connecting-synced";
 	case BT_CONN_CONNECTING_AUTO:
 		return "connecting-auto";
 	case BT_CONN_CONNECTING:
@@ -1012,6 +1014,13 @@ void bt_conn_set_state(struct bt_conn *conn, bt_conn_state_t state)
 			 */
 			bt_conn_unref(conn);
 			break;
+		case BT_CONN_CONNECTING_SYNCED:
+			/* The sync has been removed without a connection
+			 * being established.
+			 */
+
+			bt_conn_unref(conn);
+			break;
 		case BT_CONN_CONNECTED:
 			/* Can only happen if bt_conn_cleanup_all is called
 			 * whilst in a connection.
@@ -1031,6 +1040,8 @@ void bt_conn_set_state(struct bt_conn *conn, bt_conn_state_t state)
 	case BT_CONN_CONNECTING_SCAN:
 		break;
 	case BT_CONN_CONNECTING_DIR_ADV:
+		break;
+	case BT_CONN_CONNECTING_SYNCED:
 		break;
 	case BT_CONN_CONNECTING:
 		if (conn->type == BT_CONN_TYPE_SCO) {
@@ -2309,6 +2320,7 @@ static enum bt_conn_state conn_internal_to_public_state(bt_conn_state_t state)
 	case BT_CONN_CONNECTING_AUTO:
 	case BT_CONN_CONNECTING_ADV:
 	case BT_CONN_CONNECTING_DIR_ADV:
+	case BT_CONN_CONNECTING_SYNCED:
 	case BT_CONN_CONNECTING:
 		return BT_CONN_STATE_CONNECTING;
 	case BT_CONN_CONNECTED:

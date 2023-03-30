@@ -245,6 +245,11 @@ struct bt_le_per_adv_sync {
 
 	/** Reponse slot spacing (N * 1.25ms) */
 	uint8_t response_slot_spacing;
+
+#if defined (CONFIG_BT_CONN)
+	/** Holds the pending connection to allow the advertiser to connect */
+	struct bt_conn *conn;
+#endif /* CONFIG_BT_CONN */
 #endif /* CONFIG_BT_PER_ADV_SYNC_RSP */
 };
 
