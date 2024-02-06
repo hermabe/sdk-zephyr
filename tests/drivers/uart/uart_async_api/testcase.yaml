@@ -34,7 +34,7 @@ tests:
       fixture: gpio_loopback
     depends_on: gpio
     extra_configs:
-      - CONFIG_UART_NRFX_UARTE_LEGACY_SHIM=y
+      - CONFIG_UART_NRFX_UARTE_LEGACY_SHIM=n
   drivers.uart.async_api.nrf_uart:
     filter: CONFIG_UART_CONSOLE and CONFIG_SERIAL_SUPPORT_ASYNC
     harness: ztest
