@@ -1,0 +1,10 @@
+# Copyright (c) 2022, Commonwealth Scientific and Industrial Research
+# Organisation (CSIRO) ABN 41 687 119 230.
+# SPDX-License-Identifier: Apache-2.0
+
+config ENTROPY_DUMMY
+	bool "Dummy driver"
+	default y
+	select ENTROPY_HAS_DRIVER
+	help
+	  Enable Random Number Generator Dummy
