@@ -95,13 +95,13 @@ static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 		return;
 	}
 
-	bt_addr_le_to_str(addr, addr_str, sizeof(addr_str));
-	printk("Device found: %s (RSSI %d)\n", addr_str, rssi);
-
 	/* connect only to devices in close proximity */
 	if (rssi < -50) {
 		return;
 	}
+
+	bt_addr_le_to_str(addr, addr_str, sizeof(addr_str));
+	printk("Device found: %s (RSSI %d)\n", addr_str, rssi);
 
 	if (bt_le_scan_stop()) {
 		return;
