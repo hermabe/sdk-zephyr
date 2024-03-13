@@ -30,7 +30,7 @@
 #include <zephyr/bluetooth/hci_raw.h>
 
 #define LOG_MODULE_NAME hci_uart
-LOG_MODULE_REGISTER(LOG_MODULE_NAME);
+LOG_MODULE_REGISTER(LOG_MODULE_NAME, 4);
 
 static const struct device *const hci_uart_dev =
 	DEVICE_DT_GET(DT_CHOSEN(zephyr_bt_c2h_uart));
@@ -112,7 +112,7 @@ static int hdr_len(uint8_t type)
 static void rx_isr(void)
 {
 	static struct net_buf *buf;
-	static int remaining;
+	static int remaining = -1;
 	static uint8_t state;
 	static uint8_t type;
 	static uint8_t hdr_buf[MAX(sizeof(struct bt_hci_cmd_hdr),
@@ -134,6 +134,7 @@ static void rx_isr(void)
 					 */
 					remaining = hdr_len(type);
 					state = ST_HDR;
+					LOG_DBG("H4 recv: %d", type);
 				} else {
 					LOG_WRN("Unknown header %d", type);
 				}
@@ -166,6 +167,7 @@ static void rx_isr(void)
 					net_buf_unref(buf);
 					state = ST_DISCARD;
 				} else {
+					LOG_DBG("Got header, remaining %d", remaining);
 					state = ST_PAYLOAD;
 				}
 
@@ -181,6 +183,8 @@ static void rx_isr(void)
 				LOG_DBG("putting RX packet in queue.");
 				net_buf_put(&tx_queue, buf);
 				state = ST_IDLE;
+			} else {
+				LOG_DBG("Recv payload remaining %d", remaining);
 			}
 			break;
 		case ST_DISCARD:
@@ -192,6 +196,9 @@ static void rx_isr(void)
 			remaining -= read;
 			if (remaining == 0) {
 				state = ST_IDLE;
+				LOG_DBG("Done discarding");
+			} else {
+				LOG_DBG("Discarded %d, remaining %d", read, remaining);
 			}
 
 			break;
@@ -254,12 +261,16 @@ static void tx_thread(void *p1, void *p2, void *p3)
 
 		/* Wait until a buffer is available */
 		buf = net_buf_get(&tx_queue, K_FOREVER);
+
+		LOG_DBG("Got packet from tx_queue");
 		/* Pass buffer to the stack */
 		err = bt_send(buf);
 		if (err) {
 			LOG_ERR("Unable to send (err %d)", err);
 			net_buf_unref(buf);
 		}
+
+		LOG_DBG("bt_send() done");
 
 		/* Give other threads a chance to run if tx_queue keeps getting
 		 * new data all the time.
@@ -328,7 +339,7 @@ void bt_ctlr_assert_handle(char *file, uint32_t line)
 
 static int hci_uart_init(void)
 {
-	LOG_DBG("");
+	LOG_INF("Init");
 
 	if (IS_ENABLED(CONFIG_USB_CDC_ACM)) {
 		if (usb_enable(NULL)) {
@@ -360,7 +371,9 @@ int main(void)
 	static K_FIFO_DEFINE(rx_queue);
 	int err;
 
-	LOG_DBG("Start");
+	NRF_POWER->TASKS_CONSTLAT = 1;
+
+	LOG_INF("Start");
 	__ASSERT(hci_uart_dev, "UART device is NULL");
 
 	/* Enable the raw interface, this will in turn open the HCI driver */
@@ -404,9 +417,12 @@ int main(void)
 		struct net_buf *buf;
 
 		buf = net_buf_get(&rx_queue, K_FOREVER);
+		LOG_DBG("Got buf from rx_queue");
 		err = h4_send(buf);
 		if (err) {
 			LOG_ERR("Failed to send");
+		} else {
+			LOG_DBG("h4_send done");
 		}
 	}
 	return 0;
