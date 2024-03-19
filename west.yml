@@ -23,6 +23,8 @@ manifest:
       url-base: https://github.com/zephyrproject-rtos
     - name: babblesim
       url-base: https://github.com/BabbleSim
+    - name: hermabe
+      url-base: https://github.com/hermabe
 
   group-filter: [-babblesim, -optional]
 
@@ -183,8 +185,9 @@ manifest:
       groups:
         - hal
     - name: hal_nordic
-      revision: 13ac55b5b52c905642e9c54f069109d188aa5840
+      revision: wip/mlt_uart
       path: modules/hal/nordic
+      remote: hermabe
       groups:
         - hal
     - name: hal_nuvoton
